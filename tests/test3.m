@@ -1,11 +1,4 @@
 clc; clear;
-% Add project folders (portable)
-thisFile = mfilename('fullpath');
-testsDir = fileparts(thisFile);          % .../codes/tests
-codesDir = fileparts(testsDir);          % .../codes
-rootDir  = fileparts(codesDir);          % project root
-
-addpath(fullfile(rootDir,'codes','mex'));   % where your .mexw64 lives
 
 %% ----------------- Polytope 1 in world frame -----------------
 A1 = [  1   0    0;   
