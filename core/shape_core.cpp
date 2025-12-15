@@ -1,8 +1,10 @@
-#include "mex.h"              // for mexErrMsgTxt (keep for now)
 #include "shape_core.hpp"
 #include <cmath>
 #include <Eigen/Dense>
-#include <iostream>
+#include <stdexcept>
+#include <limits>
+#include <algorithm>
+
 
 using Eigen::Vector3d;
 using Eigen::Vector4d;
@@ -18,7 +20,7 @@ void shape_eval_local_phi_grad(
     Vector3d& grad_phi)
 {
     const double* p = params.data();
-    const int nParams = params.size();
+    const std::size_t nParams = static_cast<std::size_t>(params.size());
 
     phi = 0.0;
     grad_phi.setZero();
@@ -54,7 +56,7 @@ void shape_eval_local_phi_grad(
         if (m <= 0)      fail("Polytope: m must be positive.");
         if (beta <= 0.0) fail("Polytope: beta must be > 0.");
 
-        const int expected = 2 + 4 * m;
+        const std::size_t expected = 2 + 4 * static_cast<std::size_t>(m);
         if (nParams != expected)
             fail("Polytope params size must be 2 + 4*m.");
 
@@ -298,7 +300,7 @@ void shape_eval_local_phi_grad(
 
         double sum_e = e_side + e_bot + e_top;
 
-        phi = (1.0 / beta) * (mphi + std::log(sum_e));
+        phi = mphi+ (1.0 / beta) * std::log(sum_e);
 
         double inv_sum_e = 1.0 / sum_e;
         double w_side = e_side * inv_sum_e;
@@ -322,9 +324,7 @@ void shape_eval_global_ax_phi_grad(
     double& phi,
     Vector4d& grad)
 {
-    if (alpha == 0.0) {
-        throw std::runtime_error("shape_eval_global_ax_phi_grad: alpha must be nonzero.");
-    }
+    if (alpha <= 0.0) throw std::runtime_error("shape_eval_global_ax_phi_grad: alpha must be > 0.");
 
     Matrix3d R = g.block<3,3>(0,0);
     Vector3d r = g.block<3,1>(0,3);
@@ -365,19 +365,21 @@ void shape_eval_local(
     Matrix3d& hess_phi)
 {
     const double* p = params.data();
-    mwSize nParams = static_cast<mwSize>(params.size());
+    std::size_t nParams = params.size();
 
     phi = 0.0;
     grad_phi.setZero();
     hess_phi.setZero();
     const double eps = 1e-9;
 
+    auto fail = [&](const char* msg){ throw std::runtime_error(msg); };
+
     // ------------------------
     // shape_id = 1 : Sphere
     // ------------------------
     if (shape_id == 1) {
         if (nParams < 1) {
-            mexErrMsgTxt("Sphere needs params(1) = radius.");
+            fail("Sphere needs params(1) = radius.");
         }
         double R = p[0];
 
@@ -392,28 +394,29 @@ void shape_eval_local(
     // -----------------------------------------
     else if (shape_id == 2) {
         if (nParams < 3) {
-            mexErrMsgTxt("Polytope params too short.");
+            fail("Polytope params too short.");
         }
 
         int m = static_cast<int>(p[0]);
         double beta = p[1];
         if (m <= 0) {
-            mexErrMsgTxt("Polytope: m must be positive.");
+            fail("Polytope: m must be positive.");
         }
         if (beta <= 0.0) {
-            mexErrMsgTxt("Polytope: beta must be > 0.");
+            fail("Polytope: beta must be > 0.");
         }
 
-        mwSize expected = 2 + 4 * static_cast<mwSize>(m);
+        std::size_t expected = 2 + 4 * static_cast<std::size_t>(m);
         if (nParams != expected) {
-            mexErrMsgTxt("Polytope: params size must be 2 + 4*m (m, beta, A(:), b).");
+            fail("Polytope: params size must be 2 + 4*m (m, beta, A(:), b).");
         }
 
-        double* A_data = const_cast<double*>(p + 2);
-        double* b_data = const_cast<double*>(p + 2 + 3 * m);
+        const double* A_data = p + 2;
+        const double* b_data = p + 2 + 3 * m;
 
-        Eigen::Map< Eigen::Matrix<double, Eigen::Dynamic, 3> > A(A_data, m, 3);
-        Eigen::Map< Eigen::VectorXd > b(b_data, m);
+        Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, 3>> A(A_data, m, 3);
+        Eigen::Map<const Eigen::VectorXd> b(b_data, m);
+
 
         // -----------------------------
         // 1) Find zmax = max_i (a_i' y - b_i)
@@ -482,7 +485,7 @@ void shape_eval_local(
     // ---------------------------------
     else if (shape_id == 3) {
         if (nParams < 4) {
-            mexErrMsgTxt("Superellipsoid needs params = [a; b; c; n].");
+            fail("Superellipsoid needs params = [a; b; c; n].");
         }
         double a     = p[0];
         double b     = p[1];
@@ -491,7 +494,7 @@ void shape_eval_local(
 
         int n = static_cast<int>(std::round(n_raw));
         if (n <= 0 || std::fabs(n_raw - n) > 1e-9) {
-            mexErrMsgTxt("Superellipsoid: n must be a positive integer.");
+            fail("Superellipsoid: n must be a positive integer.");
         }
 
         double x1 = y(0);
@@ -565,19 +568,19 @@ void shape_eval_local(
     // ---------------------------------
    else if (shape_id == 4) {
         if (nParams < 3) {
-            mexErrMsgTxt("Superelliptic cylinder needs params = [R; h; n].");
+            fail("Superelliptic cylinder needs params = [R; h; n].");
         }
         double R     = p[0];
         double h     = p[1];
         double n_raw = p[2];
 
         if (R <= 0.0 || h <= 0.0) {
-            mexErrMsgTxt("Superelliptic cylinder: R, h must be > 0.");
+            fail("Superelliptic cylinder: R, h must be > 0.");
         }
 
         int n = static_cast<int>(std::round(n_raw));
         if (n <= 0 || std::fabs(n_raw - n) > 1e-9) {
-            mexErrMsgTxt("Superelliptic cylinder: n must be a positive integer.");
+            fail("Superelliptic cylinder: n must be a positive integer.");
         }
         int e = 2 * n;
 
@@ -664,7 +667,7 @@ void shape_eval_local(
     // ---------------------------------
    else if (shape_id == 5) {
         if (nParams < 5) {
-            mexErrMsgTxt("Truncated cone needs params = [Rb; Rt; a; b; beta].");
+            fail("Truncated cone needs params = [Rb; Rt; a; b; beta].");
         }
         double Rb   = p[0];
         double Rt   = p[1];
@@ -673,7 +676,7 @@ void shape_eval_local(
         double beta = p[4];
 
         if (Rb <= 0.0 || Rt <= 0.0 || a <= 0.0 || b <= 0.0 || beta <= 0.0) {
-            mexErrMsgTxt("Truncated cone: Rb, Rt, a, b, beta all must be > 0.");
+            fail("Truncated cone: Rb, Rt, a, b, beta all must be > 0.");
         }
 
         double x1 = y(0);
@@ -737,15 +740,15 @@ void shape_eval_local(
         Vector3d grad_top( 1.0, 0.0, 0.0);
 
         // smooth-max over [phi_side, phi_bot, phi_top]
-        double max_phi = std::max(phi_side, std::max(phi_top, phi_bot));
+        double mphi = std::max(phi_side, std::max(phi_top, phi_bot));
 
-        double e_side = std::exp(beta * (phi_side - max_phi));
-        double e_bot  = std::exp(beta * (phi_bot  - max_phi));
-        double e_top  = std::exp(beta * (phi_top  - max_phi));
+        double e_side = std::exp(beta * (phi_side - mphi));
+        double e_bot  = std::exp(beta * (phi_bot  - mphi));
+        double e_top  = std::exp(beta * (phi_top  - mphi));
 
         double sum_e = e_side + e_bot + e_top;
 
-        phi = (1.0 / beta) * (max_phi + std::log(sum_e));
+        phi = mphi + (1.0 / beta) * std::log(sum_e);
 
         double inv_sum_e = 1.0 / sum_e;
         double w_side = e_side * inv_sum_e;
@@ -769,7 +772,7 @@ void shape_eval_local(
     }
 
     else {
-        mexErrMsgTxt("Unknown shape_id. Implemented: 1..5.");
+        fail("Unknown shape_id. Implemented: 1..5.");
     }
 }
 
@@ -783,9 +786,7 @@ void shape_eval_global_ax(
     Vector4d& grad,
     Matrix4d& H)
 {
-    if (alpha == 0.0) {
-        mexErrMsgTxt("shape_eval_global_ax: alpha must be nonzero.");
-    }
+    if (alpha <= 0.0) throw std::runtime_error("shape_eval_global_ax: alpha must be > 0.");
 
     Matrix3d R = g.block<3,3>(0,0);
     Vector3d r = g.block<3,1>(0,3);

@@ -1,7 +1,7 @@
 #include "mex.h"
 #include <Eigen/Dense>
 #include <cmath>
-#include "core/shape_core.hpp"
+#include "core/idcol_kkt.hpp"
 
 using Eigen::Matrix4d;
 using Eigen::Matrix3d;
@@ -11,165 +11,6 @@ using Eigen::VectorXd;
 
 using Matrix6d = Eigen::Matrix<double, 6, 6>;
 using Vector6d = Eigen::Matrix<double, 6, 1>;
-
-// -----------------------------------------------------------------------------
-// Evaluate KKT residual F and Jacobian J for variables
-// z = [ x (3); s; lambda1; lambda2 ]
-// -----------------------------------------------------------------------------
-static void eval_F_J(
-    const Vector3d& x,
-    double s,
-    double lambda1,
-    double lambda2,
-    const Matrix4d& g1,
-    const Matrix4d& g2,
-    int shape_id1,
-    int shape_id2,
-    const VectorXd& params1,
-    const VectorXd& params2,
-    Vector6d& F,
-    Matrix6d& J)
-{
-    // alpha = e^s > 0
-    double alpha = std::exp(s);
-
-    // Evaluate phi1, grad1, H1
-    double  phi1;
-    Vector4d grad1;
-    Matrix4d H1;
-    shape_eval_global_ax(g1, x, alpha, shape_id1, params1, phi1, grad1, H1);
-
-    // Evaluate phi2, grad2, H2
-    double  phi2;
-    Vector4d grad2;
-    Matrix4d H2;
-    shape_eval_global_ax(g2, x, alpha, shape_id2, params2, phi2, grad2, H2);
-
-    // Split gradients
-    Vector3d g1x = grad1.head<3>();
-    double   g1a = grad1(3);
-
-    Vector3d g2x = grad2.head<3>();
-    double   g2a = grad2(3);
-
-    // Split Hessians via block views (no copies)
-    const auto H1_xx = H1.block<3,3>(0,0);
-    const auto H1_xa = H1.block<3,1>(0,3);       // d²phi1 / dx dα
-    double     H1_aa = H1(3,3);
-
-    const auto H2_xx = H2.block<3,3>(0,0);
-    const auto H2_xa = H2.block<3,1>(0,3);       // d²phi2 / dx dα
-    double     H2_aa = H2(3,3);
-
-    // -----------------------
-    // Build residual F(z)
-    // -----------------------
-    F(0) = phi1;                                 // F1 = φ1
-    F(1) = phi2;                                 // F2 = φ2
-    F.segment<3>(2) = lambda1 * g1x + lambda2 * g2x; // F3..5
-    F(5) = 1.0 + lambda1 * g1a + lambda2 * g2a; // F6
-
-    // -----------------------
-    // Build Jacobian J
-    // z = [x(3), s, lambda1, lambda2]
-    // -----------------------
-    J.setZero();
-
-    // Row 0: F1 = φ1
-    J.block<1,3>(0,0) = g1x.transpose();       // dF1/dx
-    J(0,3) = g1a * alpha;                      // dF1/ds
-
-    // Row 1: F2 = φ2
-    J.block<1,3>(1,0) = g2x.transpose();       // dF2/dx
-    J(1,3) = g2a * alpha;                      // dF2/ds
-
-    // Rows 2..4: Fx = λ1 ∇x φ1 + λ2 ∇x φ2
-    for (int j = 0; j < 3; ++j) {
-        int row = 2 + j;
-
-        // dF_j/dx = λ1 H1_xx(j,:) + λ2 H2_xx(j,:)
-        J.block<1,3>(row, 0) =
-            lambda1 * H1_xx.row(j) + lambda2 * H2_xx.row(j);
-
-        // dF_j/ds = (λ1 H1_xa(j) + λ2 H2_xa(j)) * α
-        double dFjs = (lambda1 * H1_xa(j) + lambda2 * H2_xa(j)) * alpha;
-        J(row, 3) = dFjs;
-
-        // dF_j/dλ1 = (∇x φ1)_j
-        J(row, 4) = g1x(j);
-        // dF_j/dλ2 = (∇x φ2)_j
-        J(row, 5) = g2x(j);
-    }
-
-    // Row 5: F6 = 1 + λ1 g1a + λ2 g2a
-    // dF6/dx = λ1 (d(dφ1/dα)/dx) + λ2 (d(dφ2/dα)/dx)
-    // H_ax = (H_xa)^T since H is symmetric
-    Eigen::RowVector3d dF6_dx =
-        lambda1 * H1_xa.transpose() + lambda2 * H2_xa.transpose();
-    J.block<1,3>(5,0) = dF6_dx;
-
-    // dF6/ds = λ1 (dg1a/ds) + λ2 (dg2a/ds)
-    // dg1a/dα = H1_aa, so dg1a/ds = H1_aa * α
-    double dF6_ds = (lambda1 * H1_aa + lambda2 * H2_aa) * alpha;
-    J(5,3) = dF6_ds;
-
-    // dF6/dλ1 = g1a, dF6/dλ2 = g2a
-    J(5,4) = g1a;
-    J(5,5) = g2a;
-}
-
-
-static void eval_F( // no J
-    const Vector3d& x,
-    double s,
-    double lambda1,
-    double lambda2,
-    const Matrix4d& g1,
-    const Matrix4d& g2,
-    int shape_id1,
-    int shape_id2,
-    const VectorXd& params1,
-    const VectorXd& params2,
-    Vector6d& F)
-{
-    // alpha = e^s > 0
-    double alpha = std::exp(s);
-
-    // φ1, ∂φ1/∂x, ∂φ1/∂α
-    double  phi1;
-    Vector4d grad1;
-    shape_eval_global_ax_phi_grad(
-        g1, x, alpha, shape_id1, params1,
-        phi1, grad1
-    );
-
-    // φ2, ∂φ2/∂x, ∂φ2/∂α
-    double  phi2;
-    Vector4d grad2;
-    shape_eval_global_ax_phi_grad(
-        g2, x, alpha, shape_id2, params2,
-        phi2, grad2
-    );
-
-    // split gradients; avoid extra Vector3d copies for no reason
-    const Vector3d g1x = grad1.head<3>();
-    const double   g1a = grad1(3);
-
-    const Vector3d g2x = grad2.head<3>();
-    const double   g2a = grad2(3);
-
-    // F1 = φ1
-    F(0) = phi1;
-
-    // F2 = φ2
-    F(1) = phi2;
-
-    // F3..5 = λ1 ∇x φ1 + λ2 ∇x φ2
-    F.segment<3>(2) = lambda1 * g1x + lambda2 * g2x;
-
-    // F6 = 1 + λ1 ∂φ1/∂α + λ2 ∂φ2/∂α
-    F(5) = 1.0 + lambda1 * g1a + lambda2 * g2a;
-}
 
 
 // -----------------------------------------------------------------------------
@@ -187,7 +28,7 @@ void mexFunction(int nlhs, mxArray* plhs[],
                  int nrhs, const mxArray* prhs[])
 {
     if (nrhs < 8) {
-        mexErrMsgTxt("Usage: [z_opt, F_opt, J_opt] = idcol_newton_mex(g1, g2, shape_id1, params1, shape_id2, params2, x0, alpha0, [lambda10, lambda20, max_iters, tol])");
+        mexErrMsgTxt("Usage: [z_opt, F_opt, J_opt] = idcol_newton_mex(g1, g2, shape_id1, params1, shape_id2, params2, x0, alpha0, [lambda10, lambda20, L, max_iters, tol])");
     }
     if (nlhs != 3) {
         mexErrMsgTxt("Need 3 outputs: z_opt (6x1), F_opt (6x1), J_opt (6x6).");
@@ -237,152 +78,306 @@ void mexFunction(int nlhs, mxArray* plhs[],
     VectorXd params2(nP2);
     for (mwSize i = 0; i < nP2; ++i) params2(i) = p2[i];
 
+    idcol::ProblemData P;
+    P.g1 = g1;
+    P.g2 = g2;
+    P.shape_id1 = shape_id1;
+    P.shape_id2 = shape_id2;
+    P.params1 = params1;
+    P.params2 = params2;
+
     // --- x0 ---
-    if (mxGetM(prhs[6]) != 3 || mxGetN(prhs[6]) != 1) {
-        mexErrMsgTxt("x0 must be 3x1.");
-    }
+    if (mxGetM(prhs[6]) != 3 || mxGetN(prhs[6]) != 1) mexErrMsgTxt("x0 must be 3x1.");
     double* x0_ptr = mxGetPr(prhs[6]);
-    Vector3d x;
-    x << x0_ptr[0], x0_ptr[1], x0_ptr[2];
+    Vector3d x0;
+    x0 << x0_ptr[0], x0_ptr[1], x0_ptr[2];
 
     // --- alpha0 ---
     double alpha0 = mxGetScalar(prhs[7]);
-    if (alpha0 <= 0.0) {
-        mexErrMsgTxt("alpha0 must be > 0.");
-    }
-    double s = std::log(alpha0);
+    if (alpha0 <= 0.0) mexErrMsgTxt("alpha0 must be > 0.");
+    double s0 = std::log(alpha0);
 
-    // Optional: lambda10, lambda20, max_iters, tol
-    double lambda1 = 1.0;
-    double lambda2 = 1.0;
-    int    max_iters = 20;
+    // Optional: lambda10, lambda20, L, max_iters, tol
+    double lambda10 = 1.0;
+    double lambda20 = 1.0;
+    double L = 1.0; //scaling
+    int    max_iters = 30;
     double tol = 1e-10;
 
-    if (nrhs >= 9) {
-        lambda1 = mxGetScalar(prhs[8]);
-    }
-    if (nrhs >= 10) {
-        lambda2 = mxGetScalar(prhs[9]);
-    }
-    if (nrhs >= 11) {
-        max_iters = static_cast<int>(mxGetScalar(prhs[10]));
-    }
-    if (nrhs >= 12) {
-        tol = mxGetScalar(prhs[11]);
-    }
+    if (nrhs >= 9)  lambda10  = mxGetScalar(prhs[8]);
+    if (nrhs >= 10) lambda20  = mxGetScalar(prhs[9]);
+    if (nrhs >= 11) L         = mxGetScalar(prhs[10]);
+    if (nrhs >= 12) max_iters = static_cast<int>(mxGetScalar(prhs[11]));
+    if (nrhs >= 13) tol       = mxGetScalar(prhs[12]);
 
-    // Newton loop on F(z) = 0
+    if (!(L > 0.0) || !std::isfinite(L)) L = 1.0; //to avoid user nonsense
+
+    // Newton parameters
+    const int    max_ls   = 8;
+    const double beta_ls  = 0.5;
+    const double c_armijo = 1e-4;
+
+    // scaling
+    Eigen::Matrix<double,6,1> D;
+    D << L, L, L, 1.0, 1.0, 1.0;
+
+    // trust-ish limits (soft, no projection)
+    const double max_step_s = 1.0;     // limit |Δs| per accepted step
+    const double max_step   = 1.0 * L; // limit overall step norm (units mostly meters)
+
+    auto run_newton = [&](Vector3d& x, double& s, double& lambda1, double& lambda2,
+                          Vector6d& F, Matrix6d& J) -> bool
+    {
+        bool solved = false;
+
+        for (int iter = 0; iter < max_iters; ++iter) {
+
+            idcol::eval_F_J(x, s, lambda1, lambda2, P, F, J);
+
+            const double Fn = F.norm();
+            if (Fn < tol) { solved = true; break; }
+
+            // Merit m(z) = 0.5 ||F||^2 and gradient g = J^T F
+            const double m0 = 0.5 * F.squaredNorm();
+            Vector6d g_m;
+            g_m.noalias() = J.transpose() * F;
+
+
+            // Build JD = J * diag(D)
+            Matrix6d JD = J;
+            for (int k = 0; k < 6; ++k) JD.col(k) *= D(k);
+
+            // Compute step in scaled coords: JD * dz_hat = -F
+            Vector6d dz_hat;
+            bool have_step = false;
+
+            /*Eigen::FullPivLU<Matrix6d> lu(JD); //Partial is enuf! otherwise replace
+            if (lu.isInvertible()) {
+                dz_hat = lu.solve(-F);
+                have_step = true;
+            }*/
+            
+            Eigen::PartialPivLU<Matrix6d> lu(JD);
+            dz_hat = lu.solve(-F);
+
+            // cheap sanity check
+            if (dz_hat.allFinite() && dz_hat.norm() <= 1e6) { have_step = true; }
+
+            // LM fallback if Newton solve looks singular
+            if (!have_step) {
+                Vector6d rhs; rhs.noalias() = -JD.transpose() * F;
+                double mu = 1e-8;
+                for (int k = 0; k < 10; ++k) {
+                    Matrix6d A = JD.transpose() * JD + mu * Matrix6d::Identity();
+                    Eigen::LLT<Matrix6d> llt(A);
+                    if (llt.info() == Eigen::Success) {
+                        dz_hat = llt.solve(rhs);
+                        have_step = true;
+                        break;
+                    }
+                    mu *= 10.0;
+                }
+                if (!have_step) {
+                    mexWarnMsgTxt("Newton: LM fallback failed (LLT). Stopping.\n");
+                    break;
+                }
+            }
+
+            // Unscale: dz = diag(D) * dz_hat
+            Vector6d dz = D.array() * dz_hat.array();
+
+            // Soft step limits (no projection)
+            if (std::isfinite(dz(3)) && std::abs(dz(3)) > max_step_s) {
+                dz *= (max_step_s / std::abs(dz(3)));
+            }
+            double dz_norm = dz.norm();
+            if (std::isfinite(dz_norm) && dz_norm > max_step) {
+                dz *= (max_step / dz_norm);
+            }
+
+            // Ensure descent for merit
+            double slope = g_m.dot(dz);
+            if (!(slope < 0.0) || !std::isfinite(slope)) {
+                // fall back to steepest descent
+                Vector6d dz_sd = -g_m;
+                double slope_sd = g_m.dot(dz_sd); // = -||g_m||^2
+                if (!(slope_sd < 0.0) || !std::isfinite(slope_sd)) {
+                    mexWarnMsgTxt("Newton: Non-descent direction and invalid gradient. Stopping.\n");
+                    break;
+                }
+                dz = dz_sd;
+                slope = slope_sd;
+
+                // limit steepest-descent too
+                if (std::isfinite(dz(3)) && std::abs(dz(3)) > max_step_s) {
+                    dz *= (max_step_s / std::abs(dz(3)));
+                }
+                dz_norm = dz.norm();
+                if (std::isfinite(dz_norm) && dz_norm > max_step) {
+                    dz *= (max_step / dz_norm);
+                }
+            }
+
+            // Backtracking line search on m(z)=0.5||F||^2
+            double t = 1.0;
+            bool accepted = false;
+
+            Vector3d x_trial;
+            double s_trial, lambda1_trial, lambda2_trial;
+            Vector6d F_trial;
+
+            for (int ls = 0; ls < max_ls; ++ls) {
+
+                x_trial       = x + t * dz.segment<3>(0);
+                s_trial       = s + t * dz(3);
+                lambda1_trial = lambda1 + t * dz(4);
+                lambda2_trial = lambda2 + t * dz(5);
+
+                idcol::eval_F(x_trial, s_trial, lambda1_trial, lambda2_trial, P, F_trial);
+
+                const double m_trial = 0.5 * F_trial.squaredNorm();
+
+                // Armijo: m(z+t dz) <= m0 + c t slope
+                if (std::isfinite(m_trial) && (m_trial <= m0 + c_armijo * t * slope)) {
+                    accepted = true;
+                    break;
+                }
+
+                t *= beta_ls;
+            }
+
+            if (!accepted) {
+                // ---------- Rescue: LM damping sweep (only when Armijo fails) ----------
+                const double m0 = 0.5 * F.squaredNorm();
+                Vector6d g;   g.noalias()   = J.transpose() * F;
+                Matrix6d JTJ;   JTJ.noalias() = J.transpose() * J;
+
+                bool rescued = false;
+
+                double mu = 1e-3;  // start damped
+                for (int tr = 0; tr < 10; ++tr) {
+
+                    Matrix6d A = JTJ + mu * Matrix6d::Identity();
+                    Eigen::LLT<Matrix6d> llt(A);
+                    if (llt.info() != Eigen::Success) {
+                        mu *= 10.0;
+                        continue;
+                    }
+
+                    Vector6d dz_r = llt.solve(-g);
+
+                    // soft step limits (use your existing max_step_s/max_step)
+                    if (std::isfinite(dz_r(3)) && std::abs(dz_r(3)) > max_step_s)
+                        dz_r *= (max_step_s / std::abs(dz_r(3)));
+
+                    double dzr_norm = dz_r.norm();
+                    if (std::isfinite(dzr_norm) && dzr_norm > max_step)
+                        dz_r *= (max_step / dzr_norm);
+
+                    // trial
+                    Vector3d x_r = x + dz_r.segment<3>(0);
+                    double   s_r = s + dz_r(3);
+                    double   l1_r = lambda1 + dz_r(4);
+                    double   l2_r = lambda2 + dz_r(5);
+
+                    Vector6d F_r;
+                    idcol::eval_F(x_r, s_r, l1_r, l2_r, P, F_r);
+
+                    const double m_r = 0.5 * F_r.squaredNorm();
+
+                    // ACCEPT: any real decrease is good in rescue mode
+                    if (std::isfinite(m_r) && (m_r < m0)) {
+                        x = x_r;
+                        s = s_r;
+                        lambda1 = l1_r;
+                        lambda2 = l2_r;
+                        rescued = true;
+                        break;
+                    }
+
+                    mu *= 10.0;
+                }
+
+                if (!rescued) {
+                    mexWarnMsgTxt("Newton: Armijo failed; rescue failed.\n");
+                    break;
+                }
+
+                // rescued: continue main iterations
+                continue;
+            }
+
+
+            // accept
+            x       = x_trial;
+            s       = s_trial;
+            lambda1 = lambda1_trial;
+            lambda2 = lambda2_trial;
+
+            if ((t * dz).norm() < 1e-14) break;
+        }
+    return solved;
+    };
+
+    // Initial guess
+    Vector3d x = x0;
+    double s = s0;
+    double lambda1 = lambda10, lambda2 = lambda20;
     Vector6d F;
     Matrix6d J;
 
-    // simple bounds on alpha = e^s (same as MATLAB: [1/100, 100])
-    const double s_min = -4.605170185988092;  // log(1e-2)
-    const double s_max =  4.605170185988092;  // log(1e2)
+    bool converged = run_newton(x, s, lambda1, lambda2, F, J);
 
-    for (int iter = 0; iter < max_iters; ++iter) {
-        // clamp s inside bounds before evaluating
-        if (s < s_min) s = s_min;
-        if (s > s_max) s = s_max;
+    // Only do restart logic if first try failed (fast path stays fast)
+    if (!converged) {
 
-        eval_F_J(x, s, lambda1, lambda2,
-                 g1, g2, shape_id1, shape_id2,
-                 params1, params2,
-                 F, J);
+        Vector3d best_x = x;
+        double   best_s = s;
+        double   best_l1 = lambda1, best_l2 = lambda2;
+        double   best_Fn = F.norm();
 
-        double Fn = F.norm();
-        if (Fn < tol) {
-            break;
-        }
+        auto attempt = [&](double s_init) -> bool {
+            Vector3d x_try = x0;
+            double   s_try = s_init;
+            double   l1_try = lambda10, l2_try = lambda20;
+            Vector6d F_try;
+            Matrix6d J_try;
 
-        // Regularize Jacobian slightly if near singular
-        /* Matrix6d J_reg = J;
-        Eigen::FullPivLU<Matrix6d> lu(J_reg);
-        if (!lu.isInvertible()) {
-            J_reg += 1e-9 * Matrix6d::Identity();
-            lu.compute(J_reg);
-            mexWarnMsgTxt("Newton: Jacobian is near-singular, regularizing.\n");
-        }
-        Vector6d dz = lu.solve(-F); */
+            bool ok = run_newton(x_try, s_try, l1_try, l2_try, F_try, J_try);
 
-        // Cheaper LU: assume J is usually well-conditioned in narrow phase
-        Eigen::PartialPivLU<Matrix6d> lu(J);
-        Vector6d dz = lu.solve(-F);
-
-
-
-        // Simple trust region in s to avoid huge alpha jumps
-        /*double max_step_s = 1.0; // limit change in s per iteration
-        if (std::abs(dz(3)) > max_step_s) {
-            double scale = max_step_s / std::abs(dz(3));
-            dz *= scale;
-        }*/
-
-        // Backtracking line search on merit function 0.5*||F||^2
-        double Fnorm2 = F.squaredNorm();
-        double t = 1.0;
-        const double beta = 0.5;   // step shrink factor
-        const double c    = 1e-4;  // sufficient decrease parameter
-
-        Vector3d x_trial;
-        double  s_trial, lambda1_trial, lambda2_trial;
-        Vector6d F_trial;
-
-        bool accepted = false;
-        for (int ls = 0; ls < 10; ++ls) {
-
-            x_trial       = x + t * dz.segment<3>(0);
-            s_trial       = s + t * dz(3);
-
-            lambda1_trial = lambda1 + t * dz(4);
-            lambda2_trial = lambda2 + t * dz(5);
-
-            // clamp s_trial to keep alpha in [alpha_min, alpha_max]
-            if (s_trial < s_min) s_trial = s_min;
-            if (s_trial > s_max) s_trial = s_max;
-
-            eval_F(x_trial, s_trial, lambda1_trial, lambda2_trial,
-            g1, g2, shape_id1, shape_id2,
-            params1, params2,
-            F_trial);
-
-            double Fnorm2_trial = F_trial.squaredNorm();
-            if (Fnorm2_trial <= Fnorm2 * (1.0 - c * t)) {
-                accepted = true;
-                break;
+            const double Fn = F_try.norm();
+            if (std::isfinite(Fn) && Fn < best_Fn) {
+                best_Fn = Fn;
+                best_x = x_try; best_s = s_try; best_l1 = l1_try; best_l2 = l2_try;
             }
 
-            t *= beta;
+            if (ok) {
+                x = x_try; s = s_try; lambda1 = l1_try; lambda2 = l2_try;
+                F = F_try; J = J_try;
+            }
+
+            return ok;
+        };
+
+        // Try #2 and #3
+        converged = attempt(s0 + 0.1);
+        if (!converged) converged = attempt(s0 - 0.1);
+
+        // Try #4: go further in the better direction (based on best residual so far)
+        if (!converged) {
+            const double dir = (best_s > s0) ? 1.0 : ((best_s < s0) ? -1.0 : 0.0);
+            if (dir != 0.0) converged = attempt(s0 + 0.2 * dir);
         }
 
-        if (!accepted) {
-            mexWarnMsgTxt("Newton: line search failed to reduce residual, stopping.\n");
-            break;
-        }
-
-        // Accept trial step
-        x       = x_trial;
-        s       = s_trial;
-        lambda1 = lambda1_trial;
-        lambda2 = lambda2_trial;
-
-        // Optional: clamp lambdas to avoid blow-up
-        /*const double lambda_max = 1e3;
-        if (lambda1 > lambda_max)  lambda1 = lambda_max;
-        if (lambda1 < -lambda_max) lambda1 = -lambda_max;
-        if (lambda2 > lambda_max)  lambda2 = lambda_max;
-        if (lambda2 < -lambda_max) lambda2 = -lambda_max;*/
-
-        // Stopping criterion on step size
-        if ((t * dz).norm() < 1e-14) {
-            break;
+        // If still not converged: return best solution found + warn
+        if (!converged) {
+            x = best_x; s = best_s; lambda1 = best_l1; lambda2 = best_l2;
+            mexWarnMsgTxt("Newton: not converged after s-restarts. Returning best; need better initial guess.\n");
         }
     }
 
     // Final evaluation for outputs
-    eval_F_J(x, s, lambda1, lambda2,
-             g1, g2, shape_id1, shape_id2,
-             params1, params2,
-             F, J);
+    idcol::eval_F_J(x, s, lambda1, lambda2, P, F, J);
 
     double alpha = std::exp(s);
 
