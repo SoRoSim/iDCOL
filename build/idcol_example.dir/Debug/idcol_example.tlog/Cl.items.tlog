@@ -1,4 +1,5 @@
-D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\examples\main.cpp;D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\build\idcol_example.dir\Debug\main.obj
-D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\core\idcol_kkt.cpp;D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\build\idcol_example.dir\Debug\idcol_kkt.obj
-D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\core\idcol_newton.cpp;D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\build\idcol_example.dir\Debug\idcol_newton.obj
+D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\examples\main2.cpp;D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\build\idcol_example.dir\Debug\main2.obj
+D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\core\idcol_kkt_v2.cpp;D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\build\idcol_example.dir\Debug\idcol_kkt_v2.obj
+D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\core\idcol_newton_v2.cpp;D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\build\idcol_example.dir\Debug\idcol_newton_v2.obj
 D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\core\shape_core.cpp;D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\build\idcol_example.dir\Debug\shape_core.obj
+D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\core\radial_bounds.cpp;D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\build\idcol_example.dir\Debug\radial_bounds.obj

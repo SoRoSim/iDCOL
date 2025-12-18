@@ -39,6 +39,11 @@ struct NewtonOptions {
 
     // Logging (optional)
     bool   verbose = false;
+
+    double s_min = -std::numeric_limits<double>::infinity();
+    double s_max =  std::numeric_limits<double>::infinity();
+    bool   clamp_s_in_trials = true; // optional convenience
+
 };
 
 struct NewtonResult {

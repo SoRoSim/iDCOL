@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <limits>
 #include <algorithm>
-
+#include <iostream>
 
 using Eigen::Vector3d;
 using Eigen::Vector4d;
@@ -36,10 +36,11 @@ void shape_eval_local_phi_grad(
         if (nParams < 1) fail("Sphere needs params(1) = radius.");
 
         double R = p[0];
+        double R2inv = 1 / (R * R);
         double r2 = y.squaredNorm();
 
-        phi = r2 - R * R;
-        grad_phi = 2.0 * y;
+        phi = r2 * R2inv - 1;
+        grad_phi = 2.0 * y * R2inv;
         return;
     }
 
@@ -52,16 +53,18 @@ void shape_eval_local_phi_grad(
 
         int m = (int)p[0];
         double beta = p[1];
+        double Lscale = p[2];
 
         if (m <= 0)      fail("Polytope: m must be positive.");
         if (beta <= 0.0) fail("Polytope: beta must be > 0.");
+        if (Lscale <= 0.0) fail("Polytope: Lscale must be > 0.");
 
-        const std::size_t expected = 2 + 4 * static_cast<std::size_t>(m);
+        const std::size_t expected = 3 + 4 * static_cast<std::size_t>(m);
         if (nParams != expected)
-            fail("Polytope params size must be 2 + 4*m.");
+            fail("Polytope params size must be 3 + 4*m.");
 
-        const double* A_data = p + 2;
-        const double* b_data = p + 2 + 3*m;
+        const double* A_data = p + 3;
+        const double* b_data = p + 3 + 3*m;
 
         Eigen::Map<const Eigen::Matrix<double,Eigen::Dynamic,3>> A(A_data, m, 3);
         Eigen::Map<const Eigen::VectorXd> b(b_data, m);
@@ -92,6 +95,9 @@ void shape_eval_local_phi_grad(
             // extremely pathological case; shouldn't really happen
             grad_phi.setZero();
         }
+
+        phi /= Lscale;
+        grad_phi /= Lscale;
 
         return;
     }
@@ -285,11 +291,11 @@ void shape_eval_local_phi_grad(
             phi_side = -1.0;
         }
 
-        double phi_bot = -x1 - a;  // bottom plane
-        double phi_top =  x1 - b;  // top plane
+        double phi_bot = -x1 / a - 1;  // bottom plane
+        double phi_top =  x1 / b - 1;  // top plane
 
-        Vector3d grad_bot(-1.0, 0.0, 0.0);
-        Vector3d grad_top( 1.0, 0.0, 0.0);
+        Vector3d grad_bot(-1.0 / a, 0.0, 0.0);
+        Vector3d grad_top( 1.0 / b, 0.0, 0.0);
 
         // smooth-max of [phi_side, phi_bot, phi_top]
         double mphi = std::max(phi_side, std::max(phi_bot, phi_top));
@@ -300,7 +306,7 @@ void shape_eval_local_phi_grad(
 
         double sum_e = e_side + e_bot + e_top;
 
-        phi = mphi+ (1.0 / beta) * std::log(sum_e);
+        phi = mphi + (1.0 / beta) * std::log(sum_e);
 
         double inv_sum_e = 1.0 / sum_e;
         double w_side = e_side * inv_sum_e;
@@ -382,11 +388,11 @@ void shape_eval_local(
             fail("Sphere needs params(1) = radius.");
         }
         double R = p[0];
-
+        double R2inv = 1 / (R * R);
         double r2 = y.squaredNorm();
-        phi = r2 - R * R;        // phi(y) = ||y||^2 - R^2
-        grad_phi = 2.0 * y;      // ∂phi/∂y = 2y
-        hess_phi = 2.0 * Matrix3d::Identity(); // ∂²phi/∂y² = 2I₃
+        phi = r2 * R2inv - 1;        // phi(y) = ||y||^2 / R^2 - 1
+        grad_phi = 2.0 * y * R2inv;      // ∂phi/∂y = 2y / R^2
+        hess_phi = 2.0 * Matrix3d::Identity() * R2inv; // ∂²phi/∂y² = 2I₃ / R^2
     }
 
     // -----------------------------------------
@@ -399,24 +405,21 @@ void shape_eval_local(
 
         int m = static_cast<int>(p[0]);
         double beta = p[1];
-        if (m <= 0) {
-            fail("Polytope: m must be positive.");
-        }
-        if (beta <= 0.0) {
-            fail("Polytope: beta must be > 0.");
-        }
+        double Lscale = p[2];
 
-        std::size_t expected = 2 + 4 * static_cast<std::size_t>(m);
-        if (nParams != expected) {
-            fail("Polytope: params size must be 2 + 4*m (m, beta, A(:), b).");
-        }
+        if (m <= 0)      fail("Polytope: m must be positive.");
+        if (beta <= 0.0) fail("Polytope: beta must be > 0.");
+        if (Lscale <= 0.0) fail("Polytope: Lscale must be > 0.");
 
-        const double* A_data = p + 2;
-        const double* b_data = p + 2 + 3 * m;
+        const std::size_t expected = 3 + 4 * static_cast<std::size_t>(m);
+        if (nParams != expected)
+            fail("Polytope params size must be 3 + 4*m.");
+
+        const double* A_data = p + 3;
+        const double* b_data = p + 3 + 3*m;
 
         Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, 3>> A(A_data, m, 3);
         Eigen::Map<const Eigen::VectorXd> b(b_data, m);
-
 
         // -----------------------------
         // 1) Find zmax = max_i (a_i' y - b_i)
@@ -432,7 +435,7 @@ void shape_eval_local(
                 Eigen::Vector3d ai = A.row(i).transpose();
                 double zi = ai.dot(y) - b(i);
                 if (zi > zmax) {
-                    zmax = zi;
+                    zmax = zi;  
                 }
             }
         }
@@ -467,9 +470,9 @@ void shape_eval_local(
             hess_phi.setZero();
             return;
         }
-
+        
         phi = zmax + (1.0 / beta) * std::log(sum_u);
-
+        
         // grad = (1/sum_u) * G
         grad_phi /= sum_u;
 
@@ -477,6 +480,10 @@ void shape_eval_local(
         // A^T (w w^T) A = grad * grad^T
         // H = beta * (A^T diag(w) A - A^T w w^T A)
         hess_phi = (beta / sum_u) * M - beta * (grad_phi * grad_phi.transpose());
+
+        phi      /= Lscale;
+        grad_phi /= Lscale;
+        hess_phi /= Lscale;
     }
 
 
@@ -733,11 +740,11 @@ void shape_eval_local(
             hess_side.setZero();
         }
 
-        double phi_bot = -x1 - a;
-        double phi_top =  x1 - b;
+        double phi_bot = -x1 / a - 1;
+        double phi_top =  x1 / b - 1;
 
-        Vector3d grad_bot(-1.0, 0.0, 0.0);
-        Vector3d grad_top( 1.0, 0.0, 0.0);
+        Vector3d grad_bot(-1.0 / a, 0.0, 0.0);
+        Vector3d grad_top( 1.0 / b, 0.0, 0.0);
 
         // smooth-max over [phi_side, phi_bot, phi_top]
         double mphi = std::max(phi_side, std::max(phi_top, phi_bot));

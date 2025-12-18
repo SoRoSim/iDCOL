@@ -23,25 +23,53 @@ b2 = [1; 1; 2; 2; 1.5; 1.5];
 
 %% ----------------- Poses g1, g2 ------------------------------
 
+% g1 = eye(4);
+% 
+% Rz = rotz(rand*360);    % degrees
+% Rx = rotx(rand*360);
+% Ry = roty(rand*360);
+% R  = Rx * Ry * Rz;
+% r  = [1+2*rand; 1+2*rand; 1+2*rand];
+% 
+% g2      = eye(4);
+% g2(1:3,1:3) = R;
+% g2(1:3,4)   = r;
+
 g1 = eye(4);
 
-Rz = rotz(rand*360);    % degrees
-Rx = rotx(rand*360);
-Ry = roty(rand*360);
-R  = Rx * Ry * Rz;
-r  = [1+2*rand; 1+2*rand; 1+2*rand];
+% --- translation: uniform on a spherical shell around body 1 ---
+rmin = 0.1;      % choose
+rmax = 3.0;      % choose
 
-g2      = eye(4);
+u = randn(3,1);          % isotropic direction
+u = u / norm(u);
+
+rho = (rmax^3 + (rmin^3 - rmax^3)*rand)^(1/3);   % uniform in volume
+% If you want uniform in radius instead, use: rho = rmin + (rmax-rmin)*rand;
+
+r = rho * u;
+
+% --- orientation: uniform random rotation (SO(3)) via random quaternion ---
+q = randn(4,1);
+q = q / norm(q);
+w=q(1); x=q(2); y=q(3); z=q(4);
+
+R = [1-2*(y^2+z^2)   2*(x*y - z*w)   2*(x*z + y*w);
+     2*(x*y + z*w)   1-2*(x^2+z^2)   2*(y*z - x*w);
+     2*(x*z - y*w)   2*(y*z + x*w)   1-2*(x^2+y^2)];
+
+g2 = eye(4);
 g2(1:3,1:3) = R;
 g2(1:3,4)   = r;
+
 
 %% ----------------- Polytope params for shape_id = 2 ---------
 
 beta = 20;    % smooth-max sharpness
 
 m1 = size(A1,1);
-% NOTE: reshape(A1',[],1) so rows go in row-major order (what C++ expects)
-params1 = [m1; beta; reshape(A1,[],1); b1];
+% NOTE: reshape(A1',[],1) so rows go in row-major order
+params1 = [m1; beta; reshape(A1,[],1); b1]; %column major
 
 m2 = size(A2,1);
 params2 = [m2; beta; reshape(A2,[],1); b2];
@@ -63,27 +91,27 @@ tol       = 1e-10;
 
 %%
 
-tic
-for i=1:1000
+% tic
+% for i=1:1000
 [z_opt, F_opt, J_opt] = idcol_newton_mex( ...
     g1, g2, ...
     shape_id1, params1, ...
     shape_id2, params2, ...
     x0, alpha0, ...
     lambda10, lambda20, L, max_iters, tol);
-end
-toc
+% end
+% toc
 
 x_star     = z_opt(1:3);
 alpha_star = z_opt(4);
 lambda1    = z_opt(5);
 lambda2    = z_opt(6);
 
-fprintf('x*      = [%g, %g, %g]^T\n', x_star);
-fprintf('alpha*  = %.12g\n', alpha_star);
-fprintf('lambda1 = %.6g,  lambda2 = %.6g\n', lambda1, lambda2);
-
-fprintf('||F_opt|| = %.3e\n', norm(F_opt));
+% fprintf('x*      = [%g, %g, %g]^T\n', x_star);
+% fprintf('alpha*  = %.12g\n', alpha_star);
+% fprintf('lambda1 = %.6g,  lambda2 = %.6g\n', lambda1, lambda2);
+% 
+% fprintf('||F_opt|| = %.3e\n', norm(F_opt));
 
 
 %% FSOLVE
@@ -180,5 +208,8 @@ title(ax, tstr, 'Interpreter','latex');
 
 axis tight
 camlight(ax,'headlight'); lighting(ax,'gouraud');
+
+
+rout= 2.60443; [X,Y,Z]=sphere(40); surf(rout*X+r(1),rout*Y+r(2),rout*Z+r(3),'FaceAlpha',0.3,'EdgeColor','none');
 
 end

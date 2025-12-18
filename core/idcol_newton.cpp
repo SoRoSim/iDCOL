@@ -14,6 +14,14 @@ NewtonResult solve_idcol_newton(
     NewtonResult out;
     NewtonOptions opt = opt_in;
 
+    auto clamp = [](double v, double lo, double hi) {
+        return (v < lo) ? lo : (v > hi) ? hi : v;
+    };
+    auto clamp_s = [&](double s) {
+        return clamp(s, opt.s_min, opt.s_max);
+    };
+
+
     // Basic input sanity
     if (!(alpha0 > 0.0) || !std::isfinite(alpha0)) {
         out.converged = false;
@@ -22,7 +30,9 @@ NewtonResult solve_idcol_newton(
     }
     if (!(opt.L > 0.0) || !std::isfinite(opt.L)) opt.L = 1.0;
 
-    const double s0 = std::log(alpha0);
+    double s0 = std::log(alpha0);
+    s0 = clamp_s(s0);
+
 
     // scaling vector D for [x(3), s, lambda1, lambda2]
     Eigen::Matrix<double,6,1> D;
@@ -124,7 +134,16 @@ NewtonResult solve_idcol_newton(
             }
 
             // Backtracking line search on m(z) = 0.5 ||F||^2
-            double t = 1.0;
+
+            double t_max_bound = 1.0;
+            if (std::isfinite(dz(3)) && dz(3) != 0.0) {
+                if (dz(3) > 0.0) t_max_bound = std::min(t_max_bound, (opt.s_max - s) / dz(3));
+                else             t_max_bound = std::min(t_max_bound, (opt.s_min - s) / dz(3));
+            }
+            if (!(t_max_bound > 0.0)) t_max_bound = 0.0; // no feasible step in that direction
+
+
+            double t = std::min(1.0, t_max_bound);
             bool accepted = false;
 
             Vector3d x_trial;
@@ -134,6 +153,9 @@ NewtonResult solve_idcol_newton(
             for (int ls = 0; ls < opt.max_ls; ++ls) {
                 x_trial = x + t * dz.segment<3>(0);
                 s_trial = s + t * dz(3);
+                s_trial = s + t * dz(3);
+                if (opt.clamp_s_in_trials) s_trial = clamp_s(s_trial);
+
                 l1_trial = lambda1 + t * dz(4);
                 l2_trial = lambda2 + t * dz(5);
 
@@ -181,6 +203,8 @@ NewtonResult solve_idcol_newton(
 
                     Vector3d x_r = x + dz_r.segment<3>(0);
                     double   s_r = s + dz_r(3);
+                    if (opt.clamp_s_in_trials) s_r = clamp_s(s_r);
+
                     double   l1_r = lambda1 + dz_r(4);
                     double   l2_r = lambda2 + dz_r(5);
 
@@ -242,7 +266,7 @@ NewtonResult solve_idcol_newton(
             ++attempts_used;
 
             Vector3d x_try = x0;
-            double s_try = s_init;
+            double s_try = clamp_s(s_init);
             double l1_try = lambda10;
             double l2_try = lambda20;
 

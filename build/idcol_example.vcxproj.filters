@@ -13,6 +13,9 @@
     <ClCompile Include="D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\core\shape_core.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\core\radial_bounds.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="D:\Research\Soft Robotics Toolbox\SoRoSim GitHub\iDCOL\CMakeLists.txt" />

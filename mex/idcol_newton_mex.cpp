@@ -369,6 +369,12 @@ void mexFunction(int nlhs, mxArray* plhs[],
             if (dir != 0.0) converged = attempt(s0 + 0.2 * dir);
         }
 
+        // Try #5: go further in the better direction (based on best residual so far)
+        if (!converged) {
+            const double dir = (best_s > s0) ? 1.0 : ((best_s < s0) ? -1.0 : 0.0);
+            converged = attempt(s0 + 0.5 * dir);
+        }
+
         // If still not converged: return best solution found + warn
         if (!converged) {
             x = best_x; s = best_s; lambda1 = best_l1; lambda2 = best_l2;

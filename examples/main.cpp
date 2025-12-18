@@ -5,6 +5,8 @@
 #include <cmath>
 #include <chrono>
 #include "core/idcol_newton.hpp"
+#include "core/radial_bounds.hpp"
+#include "core/shape_core.hpp"
 
 //small helper
 static inline double deg2rad(double deg) {
@@ -22,20 +24,23 @@ static Eigen::VectorXd pack_polytope_params_rowmajor(
     if (A.cols() != 3) throw std::runtime_error("A must be m x 3");
     if (b.size() != m) throw std::runtime_error("b must be length m");
 
-    Eigen::VectorXd params(2 + 3*m + m);
+    Eigen::VectorXd params(3 + 3*m + m);
     params(0) = static_cast<double>(m);
     params(1) = beta;
+    params(2) = 1; //Replace with max(rout1, rout2)
 
-    // A in row-major: [a11 a12 a13 a21 a22 a23 ...]
-    double* outA = params.data() + 2;
-    for (int i = 0; i < m; ++i) {
-        outA[3*i + 0] = A(i,0);
-        outA[3*i + 1] = A(i,1);
-        outA[3*i + 2] = A(i,2);
+    // A in column-major (MATLAB reshape(A,[],1) order):
+    // [A(0,0) A(1,0) ... A(m-1,0)  A(0,1) ... A(m-1,1)  A(0,2) ... A(m-1,2)]
+    double* outA = params.data() + 3;
+    for (int j = 0; j < 3; ++j) {
+        for (int i = 0; i < m; ++i) {
+            outA[j*m + i] = A(i,j);
+        }
     }
 
+
     // b
-    params.segment(2 + 3*m, m) = b;
+    params.segment(3 + 3*m, m) = b;
     return params;
 }
 
@@ -88,6 +93,10 @@ int main() {
     double angX = deg2rad(unifDeg(rng));
     double angY = deg2rad(unifDeg(rng));
 
+    //angZ = 1;
+    //angX = 2;
+    //angY = -1;
+
     Eigen::Matrix3d R =
         Eigen::AngleAxisd(angZ, Eigen::Vector3d::UnitZ()).toRotationMatrix() *
         Eigen::AngleAxisd(angX, Eigen::Vector3d::UnitX()).toRotationMatrix() *
@@ -95,9 +104,13 @@ int main() {
 
     // ---------- Translation ----------
     Eigen::Vector3d r;
-    r << 1.0 + 2.0 * unif01(rng),
-        1.0 + 2.0 * unif01(rng),
-        1.0 + 2.0 * unif01(rng);
+    r << -3.0 + 6.0 * unif01(rng),
+        -3.0 + 6.0 * unif01(rng),
+        -3.0 + 6.0 * unif01(rng);
+
+    //r*=0.1;
+
+    //r << 0.1, -0.21 , 0.01;
 
     // ---------- Pose g2 ----------
     Eigen::Matrix4d g2 = Eigen::Matrix4d::Identity();
@@ -117,17 +130,93 @@ int main() {
     P.params1 = params1;
     P.params2 = params2;
 
+    RadialBoundsOptions optr;
+    optr.num_starts = 1000;
+    RadialBounds bounds1 = compute_radial_bounds_local(2, params1, optr);
+
+    //std::cout << "R_in  = " << bounds.Rin  << "\n";
+    //std::cout << "R_out = " << bounds.Rout << "\n";
+    //std::cout << "x_out = " << bounds.xout.transpose() << "\n";
+
+    RadialBounds bounds2 = compute_radial_bounds_local(2, params2, optr);
+
+    //std::cout << "R_in  = " << bounds.Rin  << "\n";
+    //std::cout << "R_out = " << bounds.Rout << "\n";
+    //std::cout << "x_out = " << bounds.xout.transpose() << "\n";
+    double d = r.norm();
+    double alpha_min = d / (bounds1.Rout + bounds2.Rout);
+    double alpha_max = d / (bounds1.Rin + bounds2.Rin);
+    Eigen::Vector3d u = r / d;
+
+    std::cout << "alpha_min  = " << alpha_min  << "\n";
+    std::cout << "alpha_max = " << alpha_max << "\n";
+
     // ----------------- Initial guess -----------------------------
-    Eigen::Vector3d x0 = r / 2.0;
-    double alpha0 = 1.0;
-    double lambda10 = 1.0;
-    double lambda20 = 1.0;
+    Eigen::Vector3d x0 = 0.5 * ( (bounds1.Rout) * u + (r - bounds2.Rout * u) ); //(change)
+    double alpha0 = std::sqrt(alpha_min * alpha_max);
+
+    double phi0;
+    Eigen::Vector4d grad0;
+    shape_eval_global_ax_phi_grad(g1, x0, alpha0, 2, params1, phi0, grad0);
+    double lambda10 = (1.0 / alpha0) * r.transpose() * grad0.head<3>();
+    shape_eval_global_ax_phi_grad(g2, x0, alpha0, 2, params2, phi0, grad0);
+    double lambda20 = -(1.0 / alpha0) * r.transpose() * grad0.head<3>();
+
+    std::cout << "x0 = " << x0.transpose() << "\n";
+    std::cout << "alpha0  = " << alpha0  << "\n";
+    std::cout << "lambda10  = " << lambda10  << "\n";
+    std::cout << "lambda20  = " << lambda20  << "\n";
+    //std::exit(0);
 
     NewtonOptions opt;
     opt.L = 1.0;         // later: use bounding-sphere radius
     opt.max_iters = 30;
     opt.tol = 1e-10;
     opt.verbose = false;
+
+    double s_min = std::log(alpha_min);
+    double s_max = std::log(alpha_max);
+
+
+    double factor = 1/alpha_min;
+
+    if (r.norm() < (bounds1.Rin + bounds2.Rin)) {
+        std::cout << "||r|| = " << r.norm() << "\n";
+        r *= factor;
+        g2.topRightCorner<3,1>() = r;
+        P.g2 = g2;
+
+        d = r.norm();
+        alpha_min = d / (bounds1.Rout + bounds2.Rout);
+        alpha_max = d / (bounds1.Rin + bounds2.Rin);
+        u = r / d;
+
+        s_min = std::log(alpha_min);
+        s_max = std::log(alpha_max);
+
+        std::cout << "alpha_min_scaled  = " << alpha_min  << "\n";
+        std::cout << "alpha_max_scaled = " << alpha_max << "\n";
+
+        // ----------------- Initial guess -----------------------------
+        x0 = 0.5 * ( (bounds1.Rout) * u + (r - bounds2.Rout * u) ); //(change)
+        alpha0 = std::sqrt(alpha_min * alpha_max);
+
+
+        shape_eval_global_ax_phi_grad(g1, x0, alpha0, 2, params1, phi0, grad0);
+        lambda10 = (1.0 / alpha0) * r.transpose() * grad0.head<3>();
+        shape_eval_global_ax_phi_grad(g2, x0, alpha0, 2, params2, phi0, grad0);
+        lambda20 = -(1.0 / alpha0) * r.transpose() * grad0.head<3>();
+
+        std::cout << "x0_scaled = " << x0.transpose() << "\n";
+        std::cout << "alpha0_scaled  = " << alpha0  << "\n";
+        std::cout << "lambda10_scaled  = " << lambda10  << "\n";
+        std::cout << "lambda20_scaled  = " << lambda20  << "\n";
+        
+    }
+
+
+    opt.s_min = s_min;
+    opt.s_max = s_max;
 
     // start timer
     int N = 10000; //put it to 1 if no need to check time
@@ -140,10 +229,12 @@ int main() {
     // stop timer
     auto t1 = std::chrono::high_resolution_clock::now();
 
+    //std::cout << "r = " << r.transpose() << "\n";
+    std::cout << "||r|| scaled = " << r.norm() << "\n";
 
     std::cout << "converged: " << (res.converged ? "true" : "false") << "\n";
-    std::cout << "x: " << res.x.transpose() << "\n";
-    std::cout << "alpha: " << res.alpha << "\n";
+    std::cout << "x: " << (res.x / factor).transpose() << "\n";
+    std::cout << "alpha: " << res.alpha / factor << "\n";
     std::cout << "F_norm: " << res.final_F_norm << "\n";
     std::cout << "attempts_used: " << res.attempts_used << "\n";
     std::cout << "iters_used: " << res.iters_used << "\n";
