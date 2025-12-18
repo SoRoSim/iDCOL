@@ -38,7 +38,7 @@ b2 = [1; 1; 2; 2; 1.5; 1.5];
 g1 = eye(4);
 
 % --- translation: uniform on a spherical shell around body 1 ---
-rmin = 0.1;      % choose
+rmin = 0;      % choose
 rmax = 3.0;      % choose
 
 u = randn(3,1);          % isotropic direction
@@ -69,10 +69,10 @@ beta = 20;    % smooth-max sharpness
 
 m1 = size(A1,1);
 % NOTE: reshape(A1',[],1) so rows go in row-major order
-params1 = [m1; beta; reshape(A1,[],1); b1]; %column major
+params1 = [m1; beta; 1; reshape(A1,[],1); b1]; %column major
 
 m2 = size(A2,1);
-params2 = [m2; beta; reshape(A2,[],1); b2];
+params2 = [m2; beta; 1; reshape(A2,[],1); b2];
 
 shape_id1 = 2;   % convex polytope with smooth-max (your convention)
 shape_id2 = 2;
@@ -83,6 +83,7 @@ x0      = r/2;   % somewhere between the two boxes
 alpha0  = 1.0;         % any positive number
 lambda10 = 1.0;
 lambda20 = 1.0;
+s0 = log(alpha0);
 
 %%
 L = 1; %Length scale, replace with L = max(R1,R2); %bounding sphere radii
@@ -107,16 +108,15 @@ alpha_star = z_opt(4);
 lambda1    = z_opt(5);
 lambda2    = z_opt(6);
 
-% fprintf('x*      = [%g, %g, %g]^T\n', x_star);
-% fprintf('alpha*  = %.12g\n', alpha_star);
-% fprintf('lambda1 = %.6g,  lambda2 = %.6g\n', lambda1, lambda2);
-% 
-% fprintf('||F_opt|| = %.3e\n', norm(F_opt));
+fprintf('x*      = [%g, %g, %g]^T\n', x_star);
+fprintf('alpha*  = %.12g\n', alpha_star);
+fprintf('lambda1 = %.6g,  lambda2 = %.6g\n', lambda1, lambda2); 
+fprintf('||F_opt|| = %.3e\n', norm(F_opt));
 
 
 %% FSOLVE
 
-z0 = [x0(:); alpha0; lambda10; lambda20];
+z0 = [x0(:); s0; lambda10; lambda20];
 
 fun = @(z) idcol_kkt_FJ_mex(z, g1, g2, shape_id1, shape_id2, params1, params2);
 
@@ -134,7 +134,7 @@ for i=1:1
 end
 %toc
 % exitflag
-% zsol
+zsol
 %% ----------------- Sanity check: phi1, phi2 at solution -----
 
 [phi1, g1_vec, ~] = shape_global_ax_mex(g1, x_star, alpha_star, shape_id1, params1);
@@ -155,61 +155,61 @@ plotit = true;
 
 if plotit
 
-% smax = @(z) (1/beta) * log(sum(exp(beta*z)));  % z is a vector
-smax = @(z) max(z) + (1/beta) * log(sum(exp(beta*(z-max(z)))));  % z is a vector
-
-% phi_1(x/alpha) and phi_2(R'(x-r)/alpha)
-
-phi1 = @(x,alpha) smax(A1*(x/alpha)              - b1);
-phi2 = @(x,alpha) smax(A2*(R'*(x - r)/alpha)     - b2);
-
-
-figure(1); clf;
-ax = axes('Parent', gcf); hold(ax,'on'); grid(ax,'on'); axis(ax,'equal'); view(ax,3);
-
-xyzlim = 5;
-
-h1 = plot_implicit_surface(phi1, 1.0, [-xyzlim xyzlim; -xyzlim xyzlim; -xyzlim xyzlim], 80, 0, ax);
-set(h1,'FaceColor',[0 0.6 1]);
-
-h2 = plot_implicit_surface(phi2, 1.0, [-xyzlim xyzlim; -xyzlim xyzlim; -xyzlim xyzlim], 80, 0, ax);
-set(h2,'FaceColor',[1 0.5 0]);
-
-%scaled
-h3 = plot_implicit_surface(phi1, alpha_star, [-xyzlim xyzlim; -xyzlim xyzlim; -xyzlim xyzlim], 80, 0, ax);
-set(h1,'FaceColor','r');
-
-h4 = plot_implicit_surface(phi2, alpha_star, [-xyzlim xyzlim; -xyzlim xyzlim; -xyzlim xyzlim], 80, 0, ax);
-set(h2,'FaceColor','g');
-
-%kissing point
-plot3(x_star(1), x_star(2), x_star(3), 'r.', 'MarkerSize', 25);
-
-% Axis labels (LaTeX)
-xlabel(ax,'$x\;(\mathrm{m})$','Interpreter','latex');
-ylabel(ax,'$y\;(\mathrm{m})$','Interpreter','latex');
-zlabel(ax,'$z\;(\mathrm{m})$','Interpreter','latex');
-
-
-
-% Title based on alpha_star (LaTeX)
-tol = 1e-6;
-if alpha_star > 1 + tol
-    contactStr = '(Separated)';
-elseif abs(alpha_star - 1) <= tol
-    contactStr = '(Contact)';
-else
-    contactStr = '(Penetration)';
-end
-
-tstr = sprintf('$\\alpha^* = %.4f\\quad %s$', alpha_star, contactStr);
-title(ax, tstr, 'Interpreter','latex');
-
-
-axis tight
-camlight(ax,'headlight'); lighting(ax,'gouraud');
-
-
-rout= 2.60443; [X,Y,Z]=sphere(40); surf(rout*X+r(1),rout*Y+r(2),rout*Z+r(3),'FaceAlpha',0.3,'EdgeColor','none');
+    % smax = @(z) (1/beta) * log(sum(exp(beta*z)));  % z is a vector
+    % smax = @(z) max(z) + (1/beta) * log(sum(exp(beta*(z-max(z)))));  % z is a vector
+    
+    % phi_1(x/alpha) and phi_2(R'(x-r)/alpha)
+    
+    phi1 = @(x,alpha) shape_global_ax_mex(g1, x, alpha, shape_id1, params1);
+    phi2 = @(x,alpha) shape_global_ax_mex(g2, x, alpha, shape_id2, params2);
+    
+    
+    figure(1); clf;
+    ax = axes('Parent', gcf); hold(ax,'on'); grid(ax,'on'); axis(ax,'equal'); view(ax,3);
+    
+    xyzlim = 5;
+    
+    h1 = plot_implicit_surface(phi1, 1.0, [-xyzlim xyzlim; -xyzlim xyzlim; -xyzlim xyzlim], 80, 0, ax);
+    set(h1,'FaceColor',[0 0.6 1]);
+    
+    h2 = plot_implicit_surface(phi2, 1.0, [-xyzlim xyzlim; -xyzlim xyzlim; -xyzlim xyzlim], 80, 0, ax);
+    set(h2,'FaceColor',[1 0.5 0]);
+    
+    %scaled
+    h3 = plot_implicit_surface(phi1, alpha_star, [-xyzlim xyzlim; -xyzlim xyzlim; -xyzlim xyzlim], 80, 0, ax);
+    set(h1,'FaceColor','r');
+    
+    h4 = plot_implicit_surface(phi2, alpha_star, [-xyzlim xyzlim; -xyzlim xyzlim; -xyzlim xyzlim], 80, 0, ax);
+    set(h2,'FaceColor','g');
+    
+    %kissing point
+    plot3(x_star(1), x_star(2), x_star(3), 'r.', 'MarkerSize', 25);
+    
+    % Axis labels (LaTeX)
+    xlabel(ax,'$x\;(\mathrm{m})$','Interpreter','latex');
+    ylabel(ax,'$y\;(\mathrm{m})$','Interpreter','latex');
+    zlabel(ax,'$z\;(\mathrm{m})$','Interpreter','latex');
+    
+    
+    
+    % Title based on alpha_star (LaTeX)
+    tol = 1e-6;
+    if alpha_star > 1 + tol
+        contactStr = '(Separated)';
+    elseif abs(alpha_star - 1) <= tol
+        contactStr = '(Contact)';
+    else
+        contactStr = '(Penetration)';
+    end
+    
+    tstr = sprintf('$\\alpha^* = %.4f\\quad %s$', alpha_star, contactStr);
+    title(ax, tstr, 'Interpreter','latex');
+    
+    
+    axis tight
+    camlight(ax,'headlight'); lighting(ax,'gouraud');
+    
+    
+    %rout= 2.60443; [X,Y,Z]=sphere(40); surf(rout*X+r(1),rout*Y+r(2),rout*Z+r(3),'FaceAlpha',0.3,'EdgeColor','none');
 
 end

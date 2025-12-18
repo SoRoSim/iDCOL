@@ -13,7 +13,7 @@ using Vector6d = Eigen::Matrix<double, 6, 1>;
 using Vector3d = Eigen::Vector3d;
 
 struct NewtonOptions {
-    // Scaling length (e.g., bounding sphere radius or max(r1,r2))
+    // Scaling for x
     double L = 1.0;
 
     // Termination
@@ -64,7 +64,7 @@ struct NewtonResult {
     std::string message;
 };
 
-// Pure C++ solver (with explicit lambda initial guesses)
+// Pure C++ solver
 NewtonResult solve_idcol_newton(
     const ProblemData& P,
     const Vector3d& x0,

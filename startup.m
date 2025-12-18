@@ -16,6 +16,7 @@ fprintf('[Contact-Problem] paths initialized\n');
 
 %% To compile MEX files
 
-% mex -O -outdir mex -I"." -I".\eigen-3.4.0" mex\idcol_newton_mex.cpp core\shape_core.cpp core\idcol_kkt.cpp
+% mex -O -outdir mex -I"." -I".\eigen-3.4.0" mex\idcol_newton_mex.cpp core\shape_core.cpp core\idcol_kkt.cpp core\idcol_newton.cpp
+% mex -O -outdir mex -I"." -I".\eigen-3.4.0" mex\idcol_KKT_FJ_mex.cpp core\shape_core.cpp core\idcol_kkt.cpp
 % mex -O -outdir mex -I"." -I".\eigen-3.4.0" mex\shape_global_ax_mex.cpp core\shape_core.cpp
 % mex -O -outdir mex -I"." -I".\eigen-3.4.0" mex\shape_local_mex.cpp core\shape_core.cpp

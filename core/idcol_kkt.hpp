@@ -7,6 +7,7 @@
 namespace idcol {
 
 using Eigen::Matrix4d;
+using Eigen::Matrix3d;
 using Eigen::Vector4d;
 using Eigen::Vector3d;
 using Eigen::VectorXd;

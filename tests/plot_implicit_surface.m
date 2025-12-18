@@ -28,7 +28,13 @@ zv = linspace(zmin,zmax,N);
 [X,Y,Z] = meshgrid(xv,yv,zv);
 
 P = [X(:), Y(:), Z(:)].';     % 3xK (matches your phi_fun convention)
-V = phi_fun(P, alpha);
+K = size(P,2);
+V = zeros(K,1);
+for k = 1:K
+    V(k) = phi_fun(P(:,k), alpha);
+end
+
+%V = phi_fun(P, alpha);
 V = reshape(V, size(X));
 
 S = isosurface(X,Y,Z,V,iso);

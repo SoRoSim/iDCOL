@@ -25,21 +25,21 @@ void eval_F_J(
     Matrix4d H2;
     shape_eval_global_ax(P.g2, x, alpha, P.shape_id2, P.params2, phi2, grad2, H2);
 
-    // Split gradients
-    const Vector3d g1x = grad1.head<3>();
+   // Split gradients
+    Vector3d g1x = grad1.head<3>();
     const double   g1a = grad1(3);
 
-    const Vector3d g2x = grad2.head<3>();
+    Vector3d g2x = grad2.head<3>();
     const double   g2a = grad2(3);
 
-    // Split Hessians (block views)
-    const auto H1_xx = H1.block<3,3>(0,0);
-    const auto H1_xa = H1.block<3,1>(0,3);
-    const double H1_aa = H1(3,3);
+    // Split Hessians
+    Matrix3d H1_xx = H1.block<3,3>(0,0);
+    Vector3d H1_xa = H1.block<3,1>(0,3);
+    double   H1_aa = H1(3,3);
 
-    const auto H2_xx = H2.block<3,3>(0,0);
-    const auto H2_xa = H2.block<3,1>(0,3);
-    const double H2_aa = H2(3,3);
+    Matrix3d H2_xx = H2.block<3,3>(0,0);
+    Vector3d H2_xa = H2.block<3,1>(0,3);
+    const double   H2_aa = H2(3,3);
 
     // Residual F(z)
     F(0) = phi1;
@@ -87,6 +87,7 @@ void eval_F_J(
     // dF6/dλ1, dF6/dλ2
     J(5,4) = g1a;
     J(5,5) = g2a;
+
 }
 
 void eval_F(
@@ -109,16 +110,17 @@ void eval_F(
     Vector4d grad2;
     shape_eval_global_ax_phi_grad(P.g2, x, alpha, P.shape_id2, P.params2, phi2, grad2);
 
-    const Vector3d g1x = grad1.head<3>();
+    Vector3d g1x = grad1.head<3>();
     const double   g1a = grad1(3);
 
-    const Vector3d g2x = grad2.head<3>();
+    Vector3d g2x = grad2.head<3>();
     const double   g2a = grad2(3);
 
     F(0) = phi1;
     F(1) = phi2;
     F.segment<3>(2) = lambda1 * g1x + lambda2 * g2x;
     F(5) = 1.0 + lambda1 * g1a + lambda2 * g2a;
+
 }
 
 } // namespace idcol

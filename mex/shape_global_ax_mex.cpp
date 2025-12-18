@@ -26,8 +26,8 @@ void mexFunction(int nlhs, mxArray* plhs[],
     if (nrhs != 5) {
         mexErrMsgTxt("Usage: [phi, grad, H] = shape_global_ax_mex(g, x, alpha, shape_id, params)");
     }
-    if (nlhs != 3) {
-        mexErrMsgTxt("Need 3 outputs: phi, grad, H.");
+    if (nlhs < 1 || nlhs > 3){
+        mexErrMsgIdAndTxt("idcol:shape", "Use 1 to 3 outputs: phi, [grad], [H].");
     }
 
     // --- g (4x4) ---

@@ -27,7 +27,7 @@ static Eigen::VectorXd pack_polytope_params_rowmajor(
     Eigen::VectorXd params(3 + 3*m + m);
     params(0) = static_cast<double>(m);
     params(1) = beta;
-    params(2) = 1; //Replace with max(rout1, rout2)
+    params(2) = 1; //A length scale. Replace with max(rout1, rout2)
 
     // A in column-major (MATLAB reshape(A,[],1) order):
     // [A(0,0) A(1,0) ... A(m-1,0)  A(0,1) ... A(m-1,1)  A(0,2) ... A(m-1,2)]
@@ -37,7 +37,6 @@ static Eigen::VectorXd pack_polytope_params_rowmajor(
             outA[j*m + i] = A(i,j);
         }
     }
-
 
     // b
     params.segment(3 + 3*m, m) = b;
@@ -66,7 +65,7 @@ int main() {
     b2 << 1, 1, 2, 2, 1.5, 1.5;
 
     // ----------------- Poses g1, g2 ------------------------------
-    Eigen::Matrix4d g1 = Eigen::Matrix4d::Identity();
+    Eigen::Matrix4d g1 = Eigen::Matrix4d::Identity(); //no lose of generality
 
     // (A) Different every run (recommended)
     std::mt19937 rng(
@@ -93,9 +92,7 @@ int main() {
     double angX = deg2rad(unifDeg(rng));
     double angY = deg2rad(unifDeg(rng));
 
-    //angZ = 1;
-    //angX = 2;
-    //angY = -1;
+    //angZ = 1; angX = 2; angY = -1;
 
     Eigen::Matrix3d R =
         Eigen::AngleAxisd(angZ, Eigen::Vector3d::UnitZ()).toRotationMatrix() *
@@ -108,9 +105,7 @@ int main() {
         -3.0 + 6.0 * unif01(rng),
         -3.0 + 6.0 * unif01(rng);
 
-    //r*=0.1;
-
-    //r << 0.1, -0.21 , 0.01;
+    //r << 1.1, -2.21 , 1.51;
 
     // ---------- Pose g2 ----------
     Eigen::Matrix4d g2 = Eigen::Matrix4d::Identity();
@@ -125,7 +120,7 @@ int main() {
     ProblemData P;
     P.g1 = g1;
     P.g2 = g2;
-    P.shape_id1 = 2;  // your convex polytope smooth-max
+    P.shape_id1 = 2; //polytope
     P.shape_id2 = 2;
     P.params1 = params1;
     P.params2 = params2;
@@ -133,16 +128,8 @@ int main() {
     RadialBoundsOptions optr;
     optr.num_starts = 1000;
     RadialBounds bounds1 = compute_radial_bounds_local(2, params1, optr);
-
-    //std::cout << "R_in  = " << bounds.Rin  << "\n";
-    //std::cout << "R_out = " << bounds.Rout << "\n";
-    //std::cout << "x_out = " << bounds.xout.transpose() << "\n";
-
     RadialBounds bounds2 = compute_radial_bounds_local(2, params2, optr);
 
-    //std::cout << "R_in  = " << bounds.Rin  << "\n";
-    //std::cout << "R_out = " << bounds.Rout << "\n";
-    //std::cout << "x_out = " << bounds.xout.transpose() << "\n";
     double d = r.norm();
     double alpha_min = d / (bounds1.Rout + bounds2.Rout);
     double alpha_max = d / (bounds1.Rin + bounds2.Rin);
@@ -151,69 +138,42 @@ int main() {
     std::cout << "alpha_min  = " << alpha_min  << "\n";
     std::cout << "alpha_max = " << alpha_max << "\n";
 
-    // ----------------- Initial guess -----------------------------
-    Eigen::Vector3d x0 = 0.5 * ( (bounds1.Rout) * u + (r - bounds2.Rout * u) ); //(change)
-    double alpha0 = std::sqrt(alpha_min * alpha_max);
-
-    double phi0;
-    Eigen::Vector4d grad0;
-    shape_eval_global_ax_phi_grad(g1, x0, alpha0, 2, params1, phi0, grad0);
-    double lambda10 = (1.0 / alpha0) * r.transpose() * grad0.head<3>();
-    shape_eval_global_ax_phi_grad(g2, x0, alpha0, 2, params2, phi0, grad0);
-    double lambda20 = -(1.0 / alpha0) * r.transpose() * grad0.head<3>();
-
-    std::cout << "x0 = " << x0.transpose() << "\n";
-    std::cout << "alpha0  = " << alpha0  << "\n";
-    std::cout << "lambda10  = " << lambda10  << "\n";
-    std::cout << "lambda20  = " << lambda20  << "\n";
-    //std::exit(0);
-
     NewtonOptions opt;
-    opt.L = 1.0;         // later: use bounding-sphere radius
+    opt.L = 1; //scale factor for x. change with std::max(bounds1.Rout,bounds2.Rout)?
     opt.max_iters = 30;
     opt.tol = 1e-10;
     opt.verbose = false;
 
-    double s_min = std::log(alpha_min);
-    double s_max = std::log(alpha_max);
+    // Solving a surrogate problem !
+    std::cout << "||r|| = " << r.norm() << "\n";
+    r /= alpha_min;
+    g2.topRightCorner<3,1>() = r;
+    P.g2 = g2;
 
+    double alpha_max_scaled = alpha_max/alpha_min;
+    // alpha_max_scaled = 1
 
-    double factor = 1/alpha_min;
+    double s_min = 0;
+    double s_max = std::log(alpha_max_scaled);
 
-    if (r.norm() < (bounds1.Rin + bounds2.Rin)) {
-        std::cout << "||r|| = " << r.norm() << "\n";
-        r *= factor;
-        g2.topRightCorner<3,1>() = r;
-        P.g2 = g2;
+    //std::cout << "alpha_min_scaled  = " << alpha_min  << "\n";
+    std::cout << "alpha_max_scaled = " << alpha_max_scaled << "\n";
 
-        d = r.norm();
-        alpha_min = d / (bounds1.Rout + bounds2.Rout);
-        alpha_max = d / (bounds1.Rin + bounds2.Rin);
-        u = r / d;
+    // ----------------- Initial guess -----------------------------
+    Eigen::Vector3d x0 = 0.5 * ( (bounds1.Rout) * u + (r - bounds2.Rout * u) ); //(change)
+    double alpha0 = std::sqrt(alpha_max_scaled);
 
-        s_min = std::log(alpha_min);
-        s_max = std::log(alpha_max);
+    double phi0;
+    Eigen::Vector4d grad0;
+    shape_eval_global_ax_phi_grad(g1, x0, alpha0, 2, params1, phi0, grad0);
+    double lambda10 = (alpha0) / (r.transpose() * grad0.head<3>()); // from stationarity equations
+    shape_eval_global_ax_phi_grad(g2, x0, alpha0, 2, params2, phi0, grad0);
+    double lambda20 = -(alpha0) / (r.transpose() * grad0.head<3>()); // from stationarity equations
 
-        std::cout << "alpha_min_scaled  = " << alpha_min  << "\n";
-        std::cout << "alpha_max_scaled = " << alpha_max << "\n";
-
-        // ----------------- Initial guess -----------------------------
-        x0 = 0.5 * ( (bounds1.Rout) * u + (r - bounds2.Rout * u) ); //(change)
-        alpha0 = std::sqrt(alpha_min * alpha_max);
-
-
-        shape_eval_global_ax_phi_grad(g1, x0, alpha0, 2, params1, phi0, grad0);
-        lambda10 = (1.0 / alpha0) * r.transpose() * grad0.head<3>();
-        shape_eval_global_ax_phi_grad(g2, x0, alpha0, 2, params2, phi0, grad0);
-        lambda20 = -(1.0 / alpha0) * r.transpose() * grad0.head<3>();
-
-        std::cout << "x0_scaled = " << x0.transpose() << "\n";
-        std::cout << "alpha0_scaled  = " << alpha0  << "\n";
-        std::cout << "lambda10_scaled  = " << lambda10  << "\n";
-        std::cout << "lambda20_scaled  = " << lambda20  << "\n";
-        
-    }
-
+    //std::cout << "x0_scaled = " << x0.transpose() << "\n";
+    //std::cout << "alpha0_scaled  = " << alpha0  << "\n";
+    //std::cout << "lambda10_scaled  = " << lambda10  << "\n";
+    //std::cout << "lambda20_scaled  = " << lambda20  << "\n";
 
     opt.s_min = s_min;
     opt.s_max = s_max;
@@ -226,15 +186,13 @@ int main() {
     for (int i=1;i<N;i++) {
         res = idcol::solve_idcol_newton(P, x0, alpha0, lambda10, lambda20, opt);
     }
+
     // stop timer
     auto t1 = std::chrono::high_resolution_clock::now();
 
-    //std::cout << "r = " << r.transpose() << "\n";
-    std::cout << "||r|| scaled = " << r.norm() << "\n";
-
     std::cout << "converged: " << (res.converged ? "true" : "false") << "\n";
-    std::cout << "x: " << (res.x / factor).transpose() << "\n";
-    std::cout << "alpha: " << res.alpha / factor << "\n";
+    std::cout << "x: " << (res.x * alpha_min).transpose() << "\n"; // back to real pblm
+    std::cout << "alpha: " << res.alpha * alpha_min << "\n"; // back to real pblm
     std::cout << "F_norm: " << res.final_F_norm << "\n";
     std::cout << "attempts_used: " << res.attempts_used << "\n";
     std::cout << "iters_used: " << res.iters_used << "\n";
