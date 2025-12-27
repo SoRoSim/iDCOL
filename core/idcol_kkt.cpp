@@ -77,8 +77,7 @@ void eval_F_J(
 
     // dF6/dx = λ1 * d(g1a)/dx + λ2 * d(g2a)/dx
     // with symmetry: d(g_a)/dx = (H_xa)^T
-    const Eigen::RowVector3d dF6_dx =
-        lambda1 * H1_xa.transpose() + lambda2 * H2_xa.transpose();
+    const Eigen::RowVector3d dF6_dx = lambda1 * H1_xa.transpose() + lambda2 * H2_xa.transpose();
     J.block<1,3>(5,0) = dF6_dx;
 
     // dF6/ds = (λ1 H1_aa + λ2 H2_aa) * α
