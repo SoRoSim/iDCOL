@@ -117,14 +117,13 @@ int main() {
     // ----------------- Poses g1, g2 ------------------------------
     Eigen::Matrix4d g1 = Eigen::Matrix4d::Identity(); //no lose of generality
     Eigen::Matrix4d g2 = Eigen::Matrix4d::Identity(); //no lose of generality
-    Eigen::Matrix4d g2S = Eigen::Matrix4d::Identity(); //Surrogate
 
     ProblemData P;
     P.g1 = g1;
-    P.shape_id1 = 2; //polytope
-    P.shape_id2 = 2; //polytope
+    P.shape_id1 = 2; 
+    P.shape_id2 = 3; 
     P.params1 = params_poly;
-    P.params2 = params_poly;
+    P.params2 = params_se;
     
     NewtonOptions opt;
     opt.L = 1; //scale factor for x. change with: bounds_poly.Rout + bounds_poly.Rout?
@@ -139,8 +138,9 @@ int main() {
 
     //idcol::Guess guess;
 
+
     // Face-face case
-    Eigen::Vector3d u(2.0, -1.0, 2.0);
+    /*Eigen::Vector3d u(2.0, -1.0, 2.0);
     u.normalize();
     const double theta = M_PI / 3;
 
@@ -149,17 +149,25 @@ int main() {
 
     // g_here(1:3,4) = [2;2;2]
     g2.topRightCorner<3,1>() << 1.0, 0.0, 2.0;
-
-    // Build surrogate schedule (default is {1,3}, but you can set explicitly)
     P.g2 = g2;
+    */
+
+    P.g2 <<
+        0.821168,   0.557509,  -0.121927,  -1.82107,
+        0.123649,  0.0347633,   0.991717,  -2.76868,
+        0.557129,  -0.829443,  -0.0403888, -0.302319,
+        0, 0, 0, 1;
+
+
+    // Build surrogate schedule (default is {1,3}, but you can set explicitly)    
     idcol::SurrogateOptions sopt;
-    sopt.fS_values = {1, 3};   // or {1,2,4}, etc.
+    sopt.fS_values = {1};   // or {1,2,4}, etc.
 
     
     idcol::SolveResult out;
     //Call with no initial guess
     auto t0 = std::chrono::high_resolution_clock::now();
-    out = idcol::idcol_solve(P, bounds_poly, bounds_poly, opt, std::nullopt, sopt); 
+    out = idcol::idcol_solve(P, bounds_poly, bounds_se, opt, std::nullopt, sopt); 
     auto t1 = std::chrono::high_resolution_clock::now();
 
     // Extract solution (original space)

@@ -17,6 +17,7 @@
 
 // Helper to construct the pose g(t)
 Eigen::Matrix4d getSystematicPose(double t, double r_min, double r_max) {
+    
     // 1. Frequencies (Irrational ratios for ergodicity)
     const double f1 = std::sqrt(2.0);
     const double f2 = std::sqrt(3.0);
@@ -97,7 +98,136 @@ static Eigen::VectorXd pack_polytope_params_rowmajor(
     return params;
 }
 
+struct ShapeSpec {
+    int shape_id;
+    Eigen::VectorXd params;
+    RadialBounds bounds;
+    std::string name;
+};
+
+static ShapeSpec make_poly(const Eigen::Matrix<double,Eigen::Dynamic,3,Eigen::RowMajor>& A,
+                           const Eigen::VectorXd& b, double beta, const RadialBoundsOptions& optr)
+{
+    ShapeSpec s;
+    s.shape_id = 2;
+    s.name = "poly";
+    s.params = pack_polytope_params_rowmajor(A, b, beta);
+    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
+    return s;
+}
+
+static ShapeSpec make_se(double n, double a, double b, double c, const RadialBoundsOptions& optr)
+{
+    ShapeSpec s;
+    s.shape_id = 3;
+    s.name = "se";
+    Eigen::Vector4d p; p << n, a, b, c;
+    s.params = p;
+    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
+    return s;
+}
+
+static ShapeSpec make_sec(double n, double r, double h, const RadialBoundsOptions& optr)
+{
+    ShapeSpec s;
+    s.shape_id = 4;
+    s.name = "sec";
+    Eigen::Vector3d p; p << n, r, h;
+    s.params = p;
+    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
+    return s;
+}
+
+static ShapeSpec make_tc(double beta, double rb, double rt, double ac, double bc, const RadialBoundsOptions& optr)
+{
+    ShapeSpec s;
+    s.shape_id = 5;
+    s.name = "tc";
+    Eigen::Matrix<double,5,1> p; p << beta, rb, rt, ac, bc;
+    s.params = p;
+    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
+    return s;
+}
+
+static void run_case(const ShapeSpec& s1, const ShapeSpec& s2)
+{
+    using namespace idcol;
+
+    ProblemData P;
+    P.g1 = Eigen::Matrix4d::Identity();
+    P.shape_id1 = s1.shape_id;
+    P.shape_id2 = s2.shape_id;
+    P.params1 = s1.params;
+    P.params2 = s2.params;
+
+    NewtonOptions opt;
+    opt.L = 1; 
+    opt.max_iters = 30;
+    opt.tol = 1e-10;
+    opt.verbose = false;
+
+    SurrogateOptions sopt;
+    sopt.fS_values = {1, 3, 5, 7};
+
+    double r_min = 0.1 * std::min(s1.bounds.Rin,  s2.bounds.Rin);
+    double r_max = 2.0 * std::max(s1.bounds.Rout, s2.bounds.Rout);
+
+    const double t_max = 100.0;
+    const double dt = 1e-4;
+    const int N = static_cast<int>(std::round(t_max / dt)) + 1;
+
+    int failed = 0;
+    Eigen::Vector3d x0; double alpha0=1.0, lambda10=1.0, lambda20=1.0;
+
+    auto t0 = std::chrono::high_resolution_clock::now();
+
+    for (int i = 0; i < N; ++i) {
+        double t = i * dt;
+
+        P.g2 = getSystematicPose(t, r_min, r_max);
+
+        // No warm start (keep your current behavior)
+        SolveResult out = idcol_solve(P, s1.bounds, s2.bounds, opt, std::nullopt, sopt);
+
+        // If you want warm-start: pass Guess after i>0
+        x0 = out.newton.x; alpha0 = out.newton.alpha; lambda10 = out.newton.lambda1; lambda20 = out.newton.lambda2;
+
+        if (!out.newton.converged){
+            /*
+            std::cout << "\nFAIL case " << s1.name << "-" << s2.name
+                    << " i=" << i << " t=" << t << "\n";
+
+            std::cout << "g2=\n" << P.g2 << "\n";
+            std::cout << "x=" << out.newton.x.transpose() << "\n";
+            std::cout << "alpha=" << out.newton.alpha
+                    << " lambda1=" << out.newton.lambda1
+                    << " lambda2=" << out.newton.lambda2 << "\n";
+            std::cout << "iters=" << out.newton.iters_used
+                    << " ||F||=" << out.newton.final_F_norm
+                    << " msg=" << out.newton.message << "\n";
+            std::exit(0);
+            */
+            failed++;
+            
+
+        } 
+    }
+
+    auto t1 = std::chrono::high_resolution_clock::now();
+    double avg_us =
+        std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(t1 - t0).count() / double(N);
+
+    double success = 100.0 * double(N - failed) / double(N);
+
+    std::cout << "CASE " << s1.name << "-" << s2.name
+              << " | avg_us=" << avg_us
+              << " | success=" << success << "%\n";
+}
+
+
+
 int main() {
+    
     using namespace idcol;
 
     // ----------------- Polytope--------------
@@ -130,11 +260,26 @@ int main() {
     const double rt = 1.5;
     const double ac = 1.5;
     const double bc = 1.5;
-
         
     const double beta = 20.0;
     const int n = 8;
     
+    RadialBoundsOptions optr;
+    optr.num_starts = 1000;
+
+    auto poly = make_poly(A1, b1, beta, optr);
+    auto se   = make_se(n, a, b, c, optr);
+    auto sec  = make_sec(n, r, h, optr);
+    auto tc   = make_tc(beta, rb, rt, ac, bc, optr);
+
+    std::vector<ShapeSpec> shapes = {poly, se, sec, tc};
+
+    for (const auto& s1 : shapes)
+        for (const auto& s2 : shapes)
+            run_case(s1, s2);
+    //run_case(sec, sec);
+
+    /*
     Eigen::VectorXd params_poly = pack_polytope_params_rowmajor(A1, b1, beta);
     Eigen::Vector4d params_se;
     params_se << n, a, b, c;
@@ -200,10 +345,9 @@ int main() {
         
         idcol::SolveResult out;
         //Call with no initial guess
-        out = idcol::idcol_solve(P, bounds_poly, bounds_poly, opt, std::nullopt, sopt); 
+        //out = idcol::idcol_solve(P, bounds_poly, bounds_poly, opt, std::nullopt, sopt); 
 
         // Call with initial guess
-        /*
         if (i==0){
             out = idcol::idcol_solve(P, bounds_poly, bounds_poly, opt, std::nullopt, sopt); // replace std::nullopt with guess
         }
@@ -214,7 +358,6 @@ int main() {
             guess.lambda2 = lambda20;
             out = idcol::idcol_solve(P, bounds_poly, bounds_poly, opt, guess, sopt);
         }
-        */
 
         // Extract solution (original space)
         x0       = out.newton.x;
@@ -252,5 +395,5 @@ int main() {
 
     double success_rate = (static_cast<double>(N - failed_count) / N) * 100.0;
     std::cout << "Success Rate: " << success_rate << " %\n";
-
+    */
 }

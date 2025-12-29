@@ -12,12 +12,25 @@
 #include "idcol_newton.hpp"
 #include "radial_bounds.hpp"
 
-// NOTE: make sure the declaration of shape_eval_global_ax_phi_grad(...) is visible
-// by including the header where it is declared, e.g.
-//   #include "shape_core.hpp"
-// or whatever file provides its prototype.
 
 namespace idcol {
+
+inline bool shape_uses_n(int shape_id) {
+    return (shape_id == 3) || (shape_id == 4); // SE or SEC
+}
+
+inline int get_integer_n_or_default(const Eigen::VectorXd& params, int default_n = 2) {
+    if (params.size() == 0) return default_n;
+    const double n_raw = params[0];
+    const int n = static_cast<int>(std::round(n_raw));
+    if (n <= 0 || std::fabs(n_raw - n) > 1e-9) return default_n;
+    return n;
+}
+
+inline void set_n_in_params(Eigen::VectorXd& params, int n) {
+    if (params.size() > 0) params[0] = double(n);
+}
+
 
 struct Guess {
     Eigen::Vector3d x = Eigen::Vector3d::Zero();   // in body-1 frame
@@ -67,6 +80,16 @@ inline SolveResult idcol_solve(const ProblemData& P_in,
                               const std::optional<Guess>& user_guess = std::nullopt,
                               const SurrogateOptions& sopt = SurrogateOptions{})
 {
+    static thread_local int solve_depth = 0; // to avoid recursion
+
+    struct SolveDepthGuard {
+        int& d;
+        SolveDepthGuard(int& d_) : d(d_) { ++d; }
+        ~SolveDepthGuard() { --d; }
+    };
+
+    SolveDepthGuard _depth_guard(solve_depth);
+    
     SolveResult out;
 
     // Work on a local copy because we overwrite P.g2 for the surrogate problem
@@ -181,6 +204,90 @@ inline SolveResult idcol_solve(const ProblemData& P_in,
 
         if (out.newton.converged) {
             break;
+        }
+    }
+
+    if (solve_depth == 1 && !out.newton.converged) {
+
+        const bool body1_has_n = shape_uses_n(P_in.shape_id1);
+        const bool body2_has_n = shape_uses_n(P_in.shape_id2);
+
+        const int n1_target = body1_has_n ? get_integer_n_or_default(P_in.params1, 2) : 0;
+        const int n2_target = body2_has_n ? get_integer_n_or_default(P_in.params2, 2) : 0;
+        const int n_target  = std::max(n1_target, n2_target);
+
+        // trigger only if there is something to continue
+        if (n_target > 2 && (body1_has_n || body2_has_n)) {
+
+            std::vector<int> n_schedule;
+
+            // Always start from the easy case
+            n_schedule.push_back(2);
+
+            // Intermediate steps (even n)
+            for (int nk = 4; nk < n_target; nk += 2) {
+                n_schedule.push_back(nk);
+            }
+
+            // Ensure we end exactly at n_target (odd or even)
+            if (n_schedule.back() != n_target) {
+                n_schedule.push_back(n_target);
+            }
+
+            // start from the best we already have
+            idcol::SolveResult best_out = out;
+            double best_norm = out.newton.final_F_norm;
+
+            std::optional<idcol::Guess> guess_k = std::nullopt;
+
+            for (int nk : n_schedule) {
+                if (nk > n_target) break;
+
+                // build modified problem
+                idcol::ProblemData Pk = P_in;
+                if (body1_has_n) set_n_in_params(Pk.params1, nk);
+                if (body2_has_n) set_n_in_params(Pk.params2, nk);
+
+                // solve at this nk, warm-starting if we have a guess
+                idcol::SolveResult out_k = idcol::idcol_solve(
+                    Pk, bounds1, bounds2, opt_in, guess_k, sopt
+                );
+
+                // update best
+                if (std::isfinite(out_k.newton.final_F_norm) && out_k.newton.final_F_norm < best_norm) {
+                    best_out = out_k;
+                    best_norm = out_k.newton.final_F_norm;
+                }
+
+                if (out_k.newton.converged) {
+                    // warm start next stage
+                    idcol::Guess g;
+                    g.x = out_k.newton.x;
+                    g.alpha = out_k.newton.alpha;
+                    g.lambda1 = out_k.newton.lambda1;
+                    g.lambda2 = out_k.newton.lambda2;
+                    guess_k = g;
+
+                    // if we reached target, return this
+                    if (nk == n_target) {
+                        out = out_k;
+                        out.newton.message += " | converged via n-continuation";
+                        return out;
+                    }
+                } else {
+                    // if stage fails, still warm start from best found so far
+                    idcol::Guess g;
+                    g.x = best_out.newton.x;
+                    g.alpha = best_out.newton.alpha;
+                    g.lambda1 = best_out.newton.lambda1;
+                    g.lambda2 = best_out.newton.lambda2;
+                    guess_k = g;
+                }
+            }
+
+            // if continuation didn't fully converge, return best we found
+            out = best_out;
+            out.newton.message += " | attempted n-continuation (fallback)";
         }
     }
 
