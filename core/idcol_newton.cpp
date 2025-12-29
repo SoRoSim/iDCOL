@@ -153,7 +153,6 @@ NewtonResult solve_idcol_newton(
             for (int ls = 0; ls < opt.max_ls; ++ls) {
                 x_trial = x + t * dz.segment<3>(0);
                 s_trial = s + t * dz(3);
-                s_trial = s + t * dz(3);
                 if (opt.clamp_s_in_trials) s_trial = clamp_s(s_trial);
 
                 l1_trial = lambda1 + t * dz(4);

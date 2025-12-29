@@ -18,13 +18,13 @@
 // Helper to construct the pose g(t)
 Eigen::Matrix4d getSystematicPose(double t, double r_min, double r_max) {
     // 1. Frequencies (Irrational ratios for ergodicity)
-    const double f1 = 1.0;
-    const double f2 = std::sqrt(2.0);
-    const double f3 = std::sqrt(3.0);
-    const double f4 = std::sqrt(5.0);
-    const double f5 = std::sqrt(7.0);
-    const double f6 = std::sqrt(11.0);
-    const double f7 = std::sqrt(13.0);
+    const double f1 = std::sqrt(2.0);
+    const double f2 = std::sqrt(3.0);
+    const double f3 = std::sqrt(5.0);
+    const double f4 = std::sqrt(7.0);
+    const double f5 = std::sqrt(11.0);
+    const double f6 = std::sqrt(13.0);
+    const double f7 = std::sqrt(17.0);
 
     const double TWO_PI = 2.0 * M_PI;
 
@@ -68,7 +68,6 @@ Eigen::Matrix4d getSystematicPose(double t, double r_min, double r_max) {
     return g2;
 }
 
-// Row-major packer to match your polytope layout: params = [m; beta; A(row-major); b]
 static Eigen::VectorXd pack_polytope_params_rowmajor(
     const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& A,
     const Eigen::VectorXd& b,
@@ -79,8 +78,9 @@ static Eigen::VectorXd pack_polytope_params_rowmajor(
     if (b.size() != m) throw std::runtime_error("b must be length m");
 
     Eigen::VectorXd params(3 + 3*m + m);
-    params(0) = static_cast<double>(m);
-    params(1) = beta;
+    
+    params(0) = beta;
+    params(1) = static_cast<double>(m);
     params(2) = 1; //A length scale. Replace with max(rout1, rout2)
 
     // A in column-major (MATLAB reshape(A,[],1) order):
@@ -100,7 +100,7 @@ static Eigen::VectorXd pack_polytope_params_rowmajor(
 int main() {
     using namespace idcol;
 
-    // ----------------- Polytope 1 in world frame -----------------
+    // ----------------- Polytope--------------
     Eigen::MatrixXd A1(8,3);
     A1 <<  1,  1,  1,
         1, -1, -1,
@@ -116,22 +116,48 @@ int main() {
     b1 << 1.0, 1.0, 1.0, 1.0,
         5.0/3.0, 5.0/3.0, 5.0/3.0, 5.0/3.0;
 
+    // ----------------- Superellipsoid--------------
+    const double a = 0.5;
+    const double b = 1.0;
+    const double c = 1.5;
+
+    // ----------------- Superelliptic Cylinder--------------
+    const double r = 1.0;
+    const double h = 2.0; //half-height
+
+    // ----------------- Truncated Cone--------------
+    const double rb = 1.0;
+    const double rt = 1.5;
+    const double ac = 1.5;
+    const double bc = 1.5;
+
+        
     const double beta = 20.0;
+    const int n = 8;
+    
     Eigen::VectorXd params_poly = pack_polytope_params_rowmajor(A1, b1, beta);
+    Eigen::Vector4d params_se;
+    params_se << n, a, b, c;
+    Eigen::Vector3d params_sec;
+    params_sec << n, r, h;
+    Eigen::Matrix<double, 5, 1> params_tc;
+    params_tc << beta, rb, rt, ac, bc;
 
     RadialBoundsOptions optr;
     optr.num_starts = 1000;
-    RadialBounds bounds1 = compute_radial_bounds_local(2, params_poly, optr);
-    RadialBounds bounds2 = compute_radial_bounds_local(2, params_poly, optr);
 
-    //std::cout << "r_1,in  = " << bounds1.Rin  << "\n";
-    //std::cout << "r_1,out  = " << bounds1.Rout  << "\n";
+    RadialBounds bounds_poly = compute_radial_bounds_local(2, params_poly, optr);
+    RadialBounds bounds_se = compute_radial_bounds_local(3, params_se, optr);
+    RadialBounds bounds_sec = compute_radial_bounds_local(4, params_sec, optr);
+    RadialBounds bounds_tc = compute_radial_bounds_local(5, params_tc, optr);
+
+    //std::cout << "r_1,in  = " << bounds_tc.Rin  << "\n";
+    //std::cout << "r_1,out  = " << bounds_tc.Rout  << "\n";
     //std::exit(0);
 
     // ----------------- Poses g1, g2 ------------------------------
     Eigen::Matrix4d g1 = Eigen::Matrix4d::Identity(); //no lose of generality
     Eigen::Matrix4d g2 = Eigen::Matrix4d::Identity(); //no lose of generality
-    Eigen::Matrix4d g2S = Eigen::Matrix4d::Identity(); //Surrogate
 
     ProblemData P;
     P.g1 = g1;
@@ -141,7 +167,7 @@ int main() {
     P.params2 = params_poly;
     
     NewtonOptions opt;
-    opt.L = 1; //scale factor for x. change with: bounds1.Rout + bounds2.Rout?
+    opt.L = 1; //scale factor for x. change with: bounds_poly.Rout + bounds_poly.Rout?
     opt.max_iters = 30;
     opt.tol = 1e-10;
     opt.verbose = false;
@@ -150,45 +176,51 @@ int main() {
     double alpha0;
     double lambda10;
     double lambda20;
-    double phi0;
-    Eigen::Vector4d grad0;
-    Eigen::Vector3d r;
 
     double t_max = 100.0; 
     double dt = 0.0001;
     int N = static_cast<int>(std::round(t_max / dt)) + 1;
     int failed_count = 0; // Initialize counter
+    idcol::Guess guess;
 
     auto t0 = std::chrono::high_resolution_clock::now();
-    
+
     for (int i = 0; i < N; ++i) {
 
         double t = i * dt;
 
         // ---------- ergodic pose g2 ----------
-        g2 = getSystematicPose(t, 0.1 * bounds1.Rin, 2 * bounds1.Rout);
+        g2 = getSystematicPose(t, 0.1 * bounds_poly.Rin, 2 * bounds_poly.Rout);
         
         // Build surrogate schedule (default is {1,3}, but you can set explicitly)
         P.g2 = g2;
         idcol::SurrogateOptions sopt;
         sopt.fS_values = {1, 3};   // or {1,2,4}, etc.
 
-        idcol::Guess guess;
-        guess.x       = x0;
-        guess.alpha   = alpha0;
-        guess.lambda1 = lambda10;
-        guess.lambda2 = lambda20;
+        
+        idcol::SolveResult out;
+        //Call with no initial guess
+        out = idcol::idcol_solve(P, bounds_poly, bounds_poly, opt, std::nullopt, sopt); 
 
-        // Call wrapper (no initial guess)
-        idcol::SolveResult out = idcol::idcol_solve(P, bounds1, bounds2, opt,
-                                                    std::nullopt, sopt); // replace std::nullopt with guess
+        // Call with initial guess
+        /*
+        if (i==0){
+            out = idcol::idcol_solve(P, bounds_poly, bounds_poly, opt, std::nullopt, sopt); // replace std::nullopt with guess
+        }
+        else{
+            guess.x       = x0;
+            guess.alpha   = alpha0;
+            guess.lambda1 = lambda10;
+            guess.lambda2 = lambda20;
+            out = idcol::idcol_solve(P, bounds_poly, bounds_poly, opt, guess, sopt);
+        }
+        */
 
         // Extract solution (original space)
         x0       = out.newton.x;
         alpha0   = out.newton.alpha;
         lambda10 = out.newton.lambda1;
         lambda20 = out.newton.lambda2;
-
 
         // (Optional) diagnostics
         // bool ok = out.newton.converged;

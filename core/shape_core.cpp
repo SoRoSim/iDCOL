@@ -51,8 +51,8 @@ void shape_eval_local_phi_grad(
     {
         if (nParams < 3) fail("Polytope params too short.");
 
-        int m = (int)p[0];
-        double beta = p[1];
+        double beta = p[0];
+        int m = (int)p[1];
         double Lscale = p[2];
 
         if (m <= 0)      fail("Polytope: m must be positive.");
@@ -110,10 +110,10 @@ void shape_eval_local_phi_grad(
         if (nParams < 4)
             fail("Superellipsoid needs params = [a; b; c; n].");
 
-        double a     = p[0];
-        double b     = p[1];
-        double c     = p[2];
-        double n_raw = p[3];
+        double n_raw = p[0];
+        double a     = p[1];
+        double b     = p[2];
+        double c     = p[3];
 
         int n = (int)std::round(n_raw);
         if (n <= 0 || std::fabs(n_raw - n) > 1e-9)
@@ -175,9 +175,9 @@ void shape_eval_local_phi_grad(
         if (nParams < 3)
             fail("Superelliptic cylinder needs params = [R; h; n].");
 
-        double R     = p[0];
-        double h     = p[1];
-        double n_raw = p[2];
+        double n_raw = p[0];
+        double R     = p[1];
+        double h     = p[2];
 
         if (R <= 0.0 || h <= 0.0)
             fail("Superelliptic cylinder: R, h must be > 0.");
@@ -250,12 +250,12 @@ void shape_eval_local_phi_grad(
     {
         if (nParams < 5)
             fail("Truncated cone needs params = [Rb; Rt; a; b; beta].");
-
-        double Rb   = p[0];
-        double Rt   = p[1];
-        double a    = p[2];
-        double b    = p[3];
-        double beta = p[4];
+        
+        double beta = p[0];
+        double Rb   = p[1];
+        double Rt   = p[2];
+        double a    = p[3];
+        double b    = p[4];
 
         if (Rb <= 0.0 || Rt <= 0.0 || a <= 0.0 || b <= 0.0 || beta <= 0.0)
             fail("Truncated cone params must all be > 0.");
@@ -403,8 +403,8 @@ void shape_eval_local(
             fail("Polytope params too short.");
         }
 
-        int m = static_cast<int>(p[0]);
-        double beta = p[1];
+        double beta = p[0];
+        int m = static_cast<int>(p[1]);
         double Lscale = p[2];
 
         if (m <= 0)      fail("Polytope: m must be positive.");
@@ -494,10 +494,11 @@ void shape_eval_local(
         if (nParams < 4) {
             fail("Superellipsoid needs params = [a; b; c; n].");
         }
-        double a     = p[0];
-        double b     = p[1];
-        double c     = p[2];
-        double n_raw = p[3];
+        
+        double n_raw = p[0];
+        double a     = p[1];
+        double b     = p[2];
+        double c     = p[3];
 
         int n = static_cast<int>(std::round(n_raw));
         if (n <= 0 || std::fabs(n_raw - n) > 1e-9) {
@@ -577,9 +578,10 @@ void shape_eval_local(
         if (nParams < 3) {
             fail("Superelliptic cylinder needs params = [R; h; n].");
         }
-        double R     = p[0];
-        double h     = p[1];
-        double n_raw = p[2];
+        
+        double n_raw = p[0];
+        double R     = p[1];
+        double h     = p[2];
 
         if (R <= 0.0 || h <= 0.0) {
             fail("Superelliptic cylinder: R, h must be > 0.");
@@ -676,11 +678,12 @@ void shape_eval_local(
         if (nParams < 5) {
             fail("Truncated cone needs params = [Rb; Rt; a; b; beta].");
         }
-        double Rb   = p[0];
-        double Rt   = p[1];
-        double a    = p[2];
-        double b    = p[3];
-        double beta = p[4];
+        
+        double beta = p[0];
+        double Rb   = p[1];
+        double Rt   = p[2];
+        double a    = p[3];
+        double b    = p[4];
 
         if (Rb <= 0.0 || Rt <= 0.0 || a <= 0.0 || b <= 0.0 || beta <= 0.0) {
             fail("Truncated cone: Rb, Rt, a, b, beta all must be > 0.");

@@ -43,8 +43,8 @@ inline Guess map_guess_to_surrogate(const Guess& g, double scale_factor) {
     Guess gs = g;
     gs.x       = g.x * scale_factor;
     gs.alpha   = g.alpha * scale_factor;
-    gs.lambda1 = g.lambda1 * (scale_factor * scale_factor);
-    gs.lambda2 = g.lambda2 * (scale_factor * scale_factor);
+    gs.lambda1 = g.lambda1 * scale_factor;
+    gs.lambda2 = g.lambda2 * scale_factor;
     return gs;
 }
 
@@ -52,8 +52,8 @@ inline Guess map_guess_to_surrogate(const Guess& g, double scale_factor) {
 inline void map_solution_to_original(NewtonResult& res, double scale_factor) {
     res.x       /= scale_factor;
     res.alpha   /= scale_factor;
-    res.lambda1 /= (scale_factor * scale_factor);
-    res.lambda2 /= (scale_factor * scale_factor);
+    res.lambda1 /= scale_factor;
+    res.lambda2 /= scale_factor;
 }
 
 // A thin wrapper around solve_idcol_newton:
@@ -133,7 +133,7 @@ inline SolveResult idcol_solve(const ProblemData& P_in,
 
             // lambda1 from stationarity on body 1
             shape_eval_global_ax_phi_grad(P.g1, g0.x, g0.alpha,
-                                          /*shape_id=*/2, P.params1, phi_tmp, grad_tmp);
+                                          P.shape_id1, P.params1, phi_tmp, grad_tmp);
             const double denom1 = rS.dot(grad_tmp.head<3>());
             if (std::abs(denom1) < 1e-14 || !std::isfinite(denom1)) {
                 g0.lambda1 = 1.0; // fallback
@@ -143,7 +143,7 @@ inline SolveResult idcol_solve(const ProblemData& P_in,
 
             // lambda2 from stationarity on body 2 (surrogate)
             shape_eval_global_ax_phi_grad(P.g2, g0.x, g0.alpha,
-                                          /*shape_id=*/2, P.params2, phi_tmp, grad_tmp);
+                                          P.shape_id2, P.params2, phi_tmp, grad_tmp);
             const double denom2 = rS.dot(grad_tmp.head<3>());
             if (std::abs(denom2) < 1e-14 || !std::isfinite(denom2)) {
                 g0.lambda2 = 1.0; // fallback
