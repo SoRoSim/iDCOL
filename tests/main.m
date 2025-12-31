@@ -1,0 +1,155 @@
+%% demo_idcol_from_matlab.m
+clear; clc;
+
+%% ----------------- Polytope (A1,b1) -----------------
+A1 = [  1,  1,  1;
+        1, -1, -1;
+       -1,  1, -1;
+       -1, -1,  1;
+       -1, -1, -1;
+       -1,  1,  1;
+        1, -1,  1;
+        1,  1, -1 ];
+A1 = A1 * (1.0 / sqrt(3.0));
+
+b1 = [1;1;1;1; 5/3;5/3;5/3;5/3];
+
+beta = 20.0;
+n    = 8;
+
+% NOTE: you need a MATLAB-side packer that matches your C++ packing.
+% If you already have it as MEX or MATLAB function, call it here.
+% Example signature:
+%   params_poly = pack_polytope_params_rowmajor_mex(A1, b1, beta);
+%
+% If you DON'T have it yet, you must implement it (or hardcode for now).
+params_poly = pack_polytope_params(A1, b1, beta);
+
+%% ----------------- Superellipsoid -----------------
+a = 0.5; b = 1.0; c = 1.5;
+params_se = [n; a; b; c];
+
+%% ----------------- Superelliptic Cylinder -----------------
+r = 1.0; h = 2.0; % half-height
+params_sec = [n; r; h];
+
+%% ----------------- Truncated Cone -----------------
+rb = 1.0; rt = 1.5; ac = 1.5; bc = 1.5;
+params_tc = [beta; rb; rt; ac; bc];
+
+%% ----------------- Radial bounds options -----------------
+optr = struct();
+optr.num_starts = 1000;
+
+% shape_id mapping from your C++:
+% 2 polytope, 3 superellipsoid, 4 superelliptic cylinder, 5 truncated cone
+bounds_poly = radial_bounds_mex(2, params_poly, optr);
+bounds_se   = radial_bounds_mex(3, params_se,   optr);
+bounds_sec  = radial_bounds_mex(4, params_sec,  optr);
+bounds_tc   = radial_bounds_mex(5, params_tc,   optr);
+
+%% ----------------- Poses g1, g2 -----------------
+g1 = eye(4);
+
+g2 = [ ...
+    0.821168,   0.557509,  -0.121927,  -1.82107;
+    0.123649,  0.0347633,   0.991717,  -2.76868;
+    0.557129,  -0.829443,  -0.0403888, -0.302319;
+    0, 0, 0, 1];
+
+%% ----------------- ProblemData P -----------------
+P = struct();
+P.g1 = g1;
+P.g2 = g2;
+P.shape_id1 = 2;
+P.shape_id2 = 3;
+P.params1 = params_poly;
+P.params2 = params_se;
+
+%% ----------------- SolveData S (your new API) -----------------
+S = struct();
+S.P = P;
+S.bounds1 = bounds_poly;
+S.bounds2 = bounds_se;
+
+%% ----------------- NewtonOptions opt -----------------
+opt = struct();
+opt.L = 1;            % your scaling (you can set = bounds1.Rout + bounds2.Rout later)
+opt.max_iters = 30;
+opt.tol = 1e-10;
+opt.verbose = false;
+
+%% ----------------- Surrogate options -----------------
+sopt = struct();
+sopt.fS_values = [1, 3, 5, 7];  % same as your snippet
+% (If your mex expects more fields, add them here.)
+
+%% ----------------- Call iDCOL solver -----------------
+% warm start: pass [] or omit
+N = 1000;
+t0 = tic;
+for i=1:N
+out = idcol_solve_mex(S, opt, [], sopt);
+end
+t_us = toc(t0) / N * 1e6;
+
+%% ----------------- Extract & post-check -----------------
+x       = out.x;         % 3x1
+alpha   = out.alpha;
+lambda1 = out.lambda1;
+lambda2 = out.lambda2;
+
+% grad ordering is [dphi/dx; dphi/dalpha], so command uses global_xa_*
+chk = shape_core_mex('global_xa_phi_grad', P.g1, x, alpha, P.shape_id1, P.params1);
+phi_star  = chk.phi;
+grad_star = chk.grad;     % 4x1
+normal    = grad_star(1:3);
+
+%% ----------------- Print -----------------
+if out.converged
+    fprintf('[iDCOL] converged = 1\n');
+    fprintf('        time_us = %.3f\n', t_us);
+    fprintf('        fS_used = %.0f\n', out.fS_used);
+    fprintf('        fS_attempts = %.0f\n', out.fS_attempts_used);
+    fprintf('        iters = %.0f\n', out.iters_used);
+    fprintf('        ||F|| = %.3e\n', out.final_F_norm);
+    fprintf('        alpha = %.16g\n', alpha);
+    fprintf('        x = [%.16g %.16g %.16g]\n', x(1), x(2), x(3));
+    fprintf('        lambda1 = %.16g\n', lambda1);
+    fprintf('        lambda2 = %.16g\n', lambda2);
+    fprintf('        normal = [%.16g %.16g %.16g]\n', normal(1), normal(2), normal(3));
+else
+    fprintf('[iDCOL] converged = 0\n');
+    fprintf('        time_us = %.3f\n', t_us);
+    fprintf('        fS_used = %.0f\n', out.fS_used);
+    fprintf('        fS_attempts = %.0f\n', out.fS_attempts_used);
+    fprintf('        iters = %.0f\n', out.iters_used);
+    fprintf('        ||F|| = %.3e\n', out.final_F_norm);
+    fprintf('        msg = %s\n', out.message);
+end
+
+
+function params = pack_polytope_params(A, b, beta, A_scale)
+% params = [beta; m; A_scale; A(:); b]
+% where A(:) is MATLAB column-major (same as your C++ loop j*m+i).
+
+    if nargin < 4
+        A_scale = 1; % you used 1 in C++
+    end
+
+    [m, n] = size(A);
+    if n ~= 3
+        error('A must be m x 3');
+    end
+    if numel(b) ~= m
+        error('b must be length m');
+    end
+
+    params = zeros(3 + 3*m + m, 1);
+    params(1) = beta;
+    params(2) = m;
+    params(3) = A_scale;
+
+    params(4 : 3 + 3*m) = A(:);         % column-major, matches your C++ packing
+    params(3 + 3*m + 1 : end) = b(:);   % ensure column
+end

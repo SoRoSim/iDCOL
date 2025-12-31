@@ -26,8 +26,8 @@ static inline Eigen::Matrix3d skew(const Eigen::Vector3d& v)
     return S;
 }
 
-// Row-major packer to match your polytope layout: params = [m; beta; A(row-major); b]
-static Eigen::VectorXd pack_polytope_params_rowmajor(
+// Column-major packer to match your polytope layout: params = [m; beta; A(row-major); b]
+static Eigen::VectorXd pack_polytope_params(
     const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& A,
     const Eigen::VectorXd& b,
     double beta)
@@ -94,7 +94,7 @@ int main() {
     const double beta = 20.0;
     const int n = 8;
     
-    Eigen::VectorXd params_poly = pack_polytope_params_rowmajor(A1, b1, beta);
+    Eigen::VectorXd params_poly = pack_polytope_params(A1, b1, beta);
     Eigen::Vector4d params_se;
     params_se << n, a, b, c;
     Eigen::Vector3d params_sec;
