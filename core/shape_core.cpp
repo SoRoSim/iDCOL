@@ -368,7 +368,7 @@ void shape_eval_local_phi_grad(
         fail("Unknown shape_id (valid: 1–5).");
 }
 
-void shape_eval_global_ax_phi_grad(
+void shape_eval_global_xa_phi_grad(
     const Matrix4d& g,
     const Vector3d& x,
     double alpha,
@@ -854,7 +854,7 @@ void shape_eval_local(
     }
 }
 
-void shape_eval_global_ax(
+void shape_eval_global_xa(
     const Matrix4d& g,
     const Vector3d& x,
     double alpha,

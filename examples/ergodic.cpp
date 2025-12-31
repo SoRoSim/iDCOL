@@ -149,9 +149,12 @@ static ShapeSpec make_tc(double beta, double rb, double rt, double ac, double bc
     return s;
 }
 
-static void run_case(const ShapeSpec& s1, const ShapeSpec& s2)
+static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_start)
 {
     using namespace idcol;
+
+    Guess guess0;
+    bool have_guess = false;
 
     ProblemData P;
     P.g1 = Eigen::Matrix4d::Identity();
@@ -159,6 +162,11 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2)
     P.shape_id2 = s2.shape_id;
     P.params1 = s1.params;
     P.params2 = s2.params;
+
+    SolveData S;
+    S.P = P;
+    S.bounds1 = s1.bounds;
+    S.bounds2 = s2.bounds;
 
     NewtonOptions opt;
     opt.L = 1; 
@@ -177,20 +185,21 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2)
     const int N = static_cast<int>(std::round(t_max / dt)) + 1;
 
     int failed = 0;
-    Eigen::Vector3d x0; double alpha0=1.0, lambda10=1.0, lambda20=1.0;
+    //Eigen::Vector3d x0; double alpha0=1.0, lambda10=1.0, lambda20=1.0;
 
     auto t0 = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < N; ++i) {
         double t = i * dt;
 
-        P.g2 = getSystematicPose(t, r_min, r_max);
+        S.P.g2 = getSystematicPose(t, r_min, r_max);
 
-        // No warm start (keep your current behavior)
-        SolveResult out = idcol_solve(P, s1.bounds, s2.bounds, opt, std::nullopt, sopt);
+        std::optional<Guess> guess =
+            (use_warm_start && have_guess) ? std::optional<Guess>(guess0) : std::nullopt;
 
-        // If you want warm-start: pass Guess after i>0
-        x0 = out.newton.x; alpha0 = out.newton.alpha; lambda10 = out.newton.lambda1; lambda20 = out.newton.lambda2;
+        SolveResult out = idcol_solve(S, opt, guess, sopt);
+
+        //x0 = out.newton.x; alpha0 = out.newton.alpha; lambda10 = out.newton.lambda1; lambda20 = out.newton.lambda2;
 
         if (!out.newton.converged){
             /*
@@ -210,7 +219,15 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2)
             failed++;
             
 
-        } 
+        }
+        else {
+            guess0.x       = out.newton.x;
+            guess0.alpha   = out.newton.alpha;
+            guess0.lambda1 = out.newton.lambda1;
+            guess0.lambda2 = out.newton.lambda2;
+            have_guess = true;
+        }
+ 
     }
 
     auto t1 = std::chrono::high_resolution_clock::now();
@@ -276,7 +293,7 @@ int main() {
 
     for (const auto& s1 : shapes)
         for (const auto& s2 : shapes)
-            run_case(s1, s2);
+            run_case(s1, s2, false);
     //run_case(sec, sec);
 
     /*

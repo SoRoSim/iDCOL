@@ -124,20 +124,6 @@ int main() {
     P.shape_id2 = 3; 
     P.params1 = params_poly;
     P.params2 = params_se;
-    
-    NewtonOptions opt;
-    opt.L = 1; //scale factor for x. change with: bounds_poly.Rout + bounds_poly.Rout?
-    opt.max_iters = 30;
-    opt.tol = 1e-10;
-    opt.verbose = false;
-
-    Eigen::Vector3d x;
-    double alpha;
-    double lambda1;
-    double lambda2;
-
-    //idcol::Guess guess;
-
 
     // Face-face case
     /*Eigen::Vector3d u(2.0, -1.0, 2.0);
@@ -158,6 +144,25 @@ int main() {
         0.557129,  -0.829443,  -0.0403888, -0.302319,
         0, 0, 0, 1;
 
+    SolveData S;
+    S.P = P;
+    S.bounds1 = bounds_poly;
+    S.bounds2 = bounds_se;
+    
+    NewtonOptions opt;
+    opt.L = 1; //scale factor for x. change with: bounds_poly.Rout + bounds_poly.Rout?
+    opt.max_iters = 30;
+    opt.tol = 1e-10;
+    opt.verbose = false;
+
+    Eigen::Vector3d x;
+    double alpha;
+    double lambda1;
+    double lambda2;
+
+    //idcol::Guess guess;
+
+
 
     // Build surrogate schedule (default is {1,3}, but you can set explicitly)    
     idcol::SurrogateOptions sopt;
@@ -167,7 +172,7 @@ int main() {
     idcol::SolveResult out;
     //Call with no initial guess
     auto t0 = std::chrono::high_resolution_clock::now();
-    out = idcol::idcol_solve(P, bounds_poly, bounds_se, opt, std::nullopt, sopt); 
+    out = idcol::idcol_solve(S, opt, std::nullopt, sopt); 
     auto t1 = std::chrono::high_resolution_clock::now();
 
     // Extract solution (original space)
@@ -179,7 +184,7 @@ int main() {
     double phi_star;
     Eigen::Vector4d grad_star;
 
-    shape_eval_global_ax_phi_grad(P.g1, x, alpha, P.shape_id1, P.params1, phi_star, grad_star);
+    shape_eval_global_xa_phi_grad(P.g1, x, alpha, P.shape_id1, P.params1, phi_star, grad_star);
 
     double t_total_us =
     std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(t1 - t0).count();

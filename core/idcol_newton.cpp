@@ -311,6 +311,8 @@ NewtonResult solve_idcol_newton(
     out.lambda1 = lambda1;
     out.lambda2 = lambda2;
 
+    out.J.col(3) /= out.alpha; //bring back to alpha space
+    
     out.converged = converged;
     out.iters_used = iters_used;
     out.attempts_used = attempts_used;

@@ -8,7 +8,7 @@ void shape_eval_local_phi_grad( //no Hessian
     double& phi,
     Eigen::Vector3d& grad_phi);
 
-void shape_eval_global_ax_phi_grad( //no Hessian
+void shape_eval_global_xa_phi_grad( //no Hessian
     const Eigen::Matrix4d& g,
     const Eigen::Vector3d& x,
     double alpha,
@@ -25,7 +25,7 @@ void shape_eval_local(
     Eigen::Vector3d& grad_phi,
     Eigen::Matrix3d& hess_phi);
 
-void shape_eval_global_ax(
+void shape_eval_global_xa(
     const Eigen::Matrix4d& g,
     const Eigen::Vector3d& x,
     double alpha,
