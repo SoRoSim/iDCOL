@@ -46,8 +46,8 @@ struct Guess {
 };
 
 struct SurrogateOptions {
-    // Default schedule: try fS=1, then fS=3 if not converged
-    std::vector<int> fS_values = {1, 3};
+    // Default schedule: try fS=1, then fS=3, 5, 7 progressively if not converged
+    std::vector<int> fS_values = {1, 3, 5, 7};
 };
 
 struct SolveResult {

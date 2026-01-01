@@ -149,6 +149,13 @@ static idcol::NewtonOptions parse_opt(const mxArray* Omx) {
     return opt;
 }
 
+static idcol::NewtonOptions parse_opt_optional(const mxArray* Omx) {
+    idcol::NewtonOptions opt;                 // defaults
+    if (Omx == nullptr || mxIsEmpty(Omx)) return opt;
+    return parse_opt(Omx);                    // strict parse
+}
+
+
 static std::optional<idcol::Guess> parse_guess_optional(const mxArray* Gmx) {
     if (Gmx == nullptr || mxIsEmpty(Gmx)) return std::nullopt;
     if (!mxIsStruct(Gmx)) mexErrMsgIdAndTxt("idcol:badArg", "guess must be a struct or [].");
@@ -247,30 +254,29 @@ static mxArray* make_output(const idcol::SolveResult& out) {
 // ------------------------ MEX gateway ------------------------
 
 void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
-    if (nrhs < 2) {
+
+    if (nrhs < 1 || nrhs > 4) {
         mexErrMsgIdAndTxt("idcol:usage",
             "Usage:\n"
-            "  out = mex_idcol_solve(S, opt, [guess], [sopt])\n\n"
-            "Where S is a struct with fields:\n"
-            "  S.P.g1 (4x4), S.P.g2 (4x4), S.P.shape_id1, S.P.shape_id2, S.P.params1, S.P.params2\n"
-            "  S.bounds1.Rin, S.bounds1.Rout\n"
-            "  S.bounds2.Rin, S.bounds2.Rout\n"
-        );
+            "  out = mex_idcol_solve(S)\n"
+            "  out = mex_idcol_solve(S, guess)\n"
+            "  out = mex_idcol_solve(S, guess, opt)\n"
+            "  out = mex_idcol_solve(S, guess, opt, sopt)\n");
     }
 
     const mxArray* Smx      = prhs[0];
-    const mxArray* Omx      = prhs[1];
-    const mxArray* Gmx      = (nrhs >= 3 ? prhs[2] : nullptr);
+    const mxArray* Gmx      = (nrhs >= 2 ? prhs[1] : nullptr);
+    const mxArray* Omx      = (nrhs >= 3 ? prhs[2] : nullptr);
     const mxArray* Smx_opt  = (nrhs >= 4 ? prhs[3] : nullptr);
 
     idcol::SolveData S = parse_solvedata(Smx);
-    idcol::NewtonOptions opt = parse_opt(Omx);
+
     std::optional<idcol::Guess> guess = parse_guess_optional(Gmx);
-    idcol::SurrogateOptions sopt = parse_sopt_optional(Smx_opt);
+    idcol::NewtonOptions opt          = parse_opt_optional(Omx);
+    idcol::SurrogateOptions sopt      = parse_sopt_optional(Smx_opt);
 
     idcol::SolveResult out = idcol::idcol_solve(S, opt, guess, sopt);
 
     plhs[0] = make_output(out);
-
-    // (optional) if nlhs > 1, you could return extra debugging outputs, but not needed.
 }
+

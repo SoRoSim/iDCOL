@@ -61,15 +61,15 @@ g2 = [ ...
 P = struct();
 P.g1 = g1;
 P.g2 = g2;
-P.shape_id1 = 2;
+P.shape_id1 = 3;
 P.shape_id2 = 3;
-P.params1 = params_poly;
+P.params1 = params_se;
 P.params2 = params_se;
 
 %% ----------------- SolveData S (your new API) -----------------
 S = struct();
 S.P = P;
-S.bounds1 = bounds_poly;
+S.bounds1 = bounds_se;
 S.bounds2 = bounds_se;
 
 %% ----------------- NewtonOptions opt -----------------
@@ -89,7 +89,8 @@ sopt.fS_values = [1, 3, 5, 7];  % same as your snippet
 N = 1000;
 t0 = tic;
 for i=1:N
-out = idcol_solve_mex(S, opt, [], sopt);
+%out = idcol_solve_mex(S, [], opt, sopt);
+out = idcol_solve_mex(S);
 end
 t_us = toc(t0) / N * 1e6;
 
