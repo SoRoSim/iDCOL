@@ -15,6 +15,7 @@
 
 namespace idcol {
 
+
 struct SolveData {
     ProblemData P;
     RadialBounds bounds1;
@@ -37,6 +38,50 @@ inline void set_n_in_params(Eigen::VectorXd& params, int n) {
     if (params.size() > 0) params[0] = double(n);
 }
 
+// params scaling helper
+inline void idcol_scale_params_inplace(int shape_id,
+                                       Eigen::VectorXd& params,
+                                       double s)
+{
+    switch (shape_id) {
+
+        case 1: { // Sphere: [R]
+            params(0) *= s;
+            break;
+        }
+
+        case 2: { // Polytope: [beta; m; Lscale; A(:); b]
+
+            const int m = static_cast<int>(std::llround(params(1)));
+
+            params(2) *= s;
+
+            // start = (b0 - 1) = 3 + 3*m
+            const int b_start = 3 + 3 * m;
+            params.segment(b_start, m) *= s;
+
+            break;
+        }
+
+        case 3: { // Superellipsoid: [n; a; b; c]
+            params.segment(1, 3) *= s;
+            break;
+        }
+
+        case 4: { // Superelliptic cylinder: [n; R; h]
+            params.segment(1, 2) *= s;
+            break;
+        }
+
+        case 5: { // Truncated cone: [beta; Rb; Rt; a; b]
+            params.segment(1, 4) *= s;
+            break;
+        }
+
+        default:
+            break; 
+    }
+}
 
 struct Guess {
     Eigen::Vector3d x = Eigen::Vector3d::Zero();   // in body-1 frame
@@ -48,6 +93,11 @@ struct Guess {
 struct SurrogateOptions {
     // Default schedule: try fS=1, then fS=3, 5, 7 progressively if not converged
     std::vector<int> fS_values = {1, 3, 5, 7};
+
+    // ---- Geometric scaling ----
+    bool enable_scaling = true;
+    // Geometric scaling factor: 'maxRout' or 'sumRout'
+    std::string scale_mode = "maxRout";
 };
 
 struct SolveResult {
@@ -76,14 +126,15 @@ inline void map_solution_to_original(NewtonResult& res, double scale_factor) {
     res.J *= scale_factor; // surrogate problem has same F.
 }
 
+
 // A thin wrapper around solve_idcol_newton:
 // - optional user guess (original space)
 // - otherwise auto-guess in surrogate space
 // - try fS schedule (default {1,3}) until converged or exhausted
 inline SolveResult idcol_solve(const SolveData& S,
-                              const NewtonOptions& opt_in,
-                              const std::optional<Guess>& user_guess = std::nullopt,
-                              const SurrogateOptions& sopt = SurrogateOptions{})
+                              std::optional<Guess> user_guess = std::nullopt,
+                              NewtonOptions opt_in = NewtonOptions{},
+                              SurrogateOptions sopt = SurrogateOptions{})
 {
     const ProblemData& P_in = S.P;
     const RadialBounds& bounds1 = S.bounds1;
@@ -103,6 +154,40 @@ inline SolveResult idcol_solve(const SolveData& S,
 
     // Work on a local copy because we overwrite P.g2 for the surrogate problem
     ProblemData P = P_in;
+
+    // ------------------------------------------------------------------
+    // Unit scaling (NOT surrogate scaling)
+    //  - scales translations in g1,g2; bounds; params; user_guess.x
+    //  - alpha and lambdas unchanged
+    // ------------------------------------------------------------------
+    double Lscale = 1.0;
+    if (sopt.enable_scaling) {
+        if (sopt.scale_mode == "sumRout") {
+            Lscale = bounds1.Rout + bounds2.Rout;
+        } else { // default "maxRout"
+            Lscale = std::max(bounds1.Rout, bounds2.Rout);
+        }
+        if (!std::isfinite(Lscale) || Lscale <= 0.0) Lscale = 1.0;
+    }
+    const double invLscale = 1.0 / Lscale;
+
+    // scaled bounds (local copies)
+    RadialBounds b1 = bounds1;
+    RadialBounds b2 = bounds2;
+
+    if (sopt.enable_scaling && invLscale != 1.0) {
+        // scale bounds
+        b1.Rin  *= invLscale;  b1.Rout *= invLscale;
+        b2.Rin  *= invLscale;  b2.Rout *= invLscale;
+
+        // scale translations in g1,g2
+        P.g1.topRightCorner<3,1>() *= invLscale;
+        P.g2.topRightCorner<3,1>() *= invLscale;
+
+        // scale shape params (length-like entries)
+        idcol_scale_params_inplace(P.shape_id1, P.params1, invLscale);
+        idcol_scale_params_inplace(P.shape_id2, P.params2, invLscale);
+    }
 
     // Original relative translation (in g2)
     const Eigen::Matrix4d g2 = P.g2;
@@ -127,8 +212,8 @@ inline SolveResult idcol_solve(const SolveData& S,
     const Eigen::Vector3d u = r0 / d0;
 
     // Compute alpha bounds (original)
-    const double alpha_min = d0 / (bounds1.Rout + bounds2.Rout);
-    const double alpha_max = d0 / (bounds1.Rin  + bounds2.Rin);
+    const double alpha_min = d0 / (b1.Rout + b2.Rout);
+    const double alpha_max = d0 / (b1.Rin  + b2.Rin);
 
     auto attempt = [&](int fS)->NewtonResult {
         NewtonOptions opt = opt_in;
@@ -138,7 +223,7 @@ inline SolveResult idcol_solve(const SolveData& S,
 
         // Build surrogate g2S with controlled separation
         Eigen::Matrix4d g2S = g2;
-        Eigen::Vector3d rS  = u * (bounds1.Rout + bounds2.Rout) * static_cast<double>(fS);
+        Eigen::Vector3d rS  = u * (b1.Rout + b2.Rout) * static_cast<double>(fS);
         g2S.topRightCorner<3,1>() = rS;
         P.g2 = g2S;
 
@@ -153,11 +238,16 @@ inline SolveResult idcol_solve(const SolveData& S,
         Guess g0;
 
         if (user_guess.has_value()) {
-            // User guess is in original space; map to surrogate space
-            g0 = map_guess_to_surrogate(*user_guess, scale_factor);
+            // User guess is in original units; map to scaled units first (x only)
+            Guess g_user = *user_guess;
+            if (sopt.enable_scaling && invLscale != 1.0) {
+                g_user.x *= invLscale;
+            }
+            // Now map to surrogate space
+            g0 = map_guess_to_surrogate(g_user, scale_factor);
         } else {
             // Auto guess directly in surrogate space (matches your snippet)
-            g0.x = bounds1.Rout * u;
+            g0.x = b1.Rout * u;
             g0.alpha = std::sqrt(alpha_min_scaled * alpha_max_scaled);
 
             double phi_tmp;
@@ -189,6 +279,15 @@ inline SolveResult idcol_solve(const SolveData& S,
 
         // Map back to original space before returning
         map_solution_to_original(resS, scale_factor);
+        
+        // Map back from scaled units to original units (x only)
+        if (sopt.enable_scaling && invLscale != 1.0) {
+            resS.x *= Lscale;
+            resS.F.segment<3>(2) *= invLscale;
+            resS.J.block<3,6>(2,0) *= invLscale;
+            resS.J.block<6,3>(0,0) *= invLscale;
+        }
+
         return resS;
     };
 
@@ -265,7 +364,7 @@ inline SolveResult idcol_solve(const SolveData& S,
                 }
 
                 // solve at this nk, warm-starting if we have a guess
-                idcol::SolveResult out_k = idcol::idcol_solve(Sk, opt_in, guess_k, sopt);
+                idcol::SolveResult out_k = idcol::idcol_solve(Sk, guess_k, opt_in, sopt);
 
                 // update best
                 if (std::isfinite(out_k.newton.final_F_norm) && out_k.newton.final_F_norm < best_norm) {
@@ -306,6 +405,21 @@ inline SolveResult idcol_solve(const SolveData& S,
     }
 
     return out;
+}
+
+// S + opt
+inline SolveResult idcol_solve(const SolveData& S, const NewtonOptions& opt) {
+    return idcol_solve(S, std::nullopt, opt, SurrogateOptions{});
+}
+
+// S + guess
+inline SolveResult idcol_solve(const SolveData& S, const Guess& guess) {
+    return idcol_solve(S, guess, NewtonOptions{}, SurrogateOptions{});
+}
+
+// S + guess + opt
+inline SolveResult idcol_solve(const SolveData& S, const Guess& guess, const NewtonOptions& opt) {
+    return idcol_solve(S, guess, opt, SurrogateOptions{});
 }
 
 } // namespace idcol

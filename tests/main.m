@@ -1,6 +1,17 @@
 %% demo_idcol_from_matlab.m
 clear; clc;
 
+%% ----------------- Poses g1, g2 -----------------
+g1 = eye(4);
+
+g2 = [ ...
+    0.821168,   0.557509,  -0.121927,  -1.82107;
+        0.123649,  0.0347633,   0.991717,  -2.76868;
+        0.557129,  -0.829443,  -0.0403888, -0.302319;
+        0, 0, 0, 1];
+
+g2(1:3,4) = g2(1:3,4);
+
 %% ----------------- Polytope (A1,b1) -----------------
 A1 = [  1,  1,  1;
         1, -1, -1;
@@ -13,7 +24,7 @@ A1 = [  1,  1,  1;
 A1 = A1 * (1.0 / sqrt(3.0));
 
 b1 = [1;1;1;1; 5/3;5/3;5/3;5/3];
-
+Lscale = 1;
 beta = 20.0;
 n    = 8;
 
@@ -23,7 +34,7 @@ n    = 8;
 %   params_poly = pack_polytope_params_rowmajor_mex(A1, b1, beta);
 %
 % If you DON'T have it yet, you must implement it (or hardcode for now).
-params_poly = pack_polytope_params(A1, b1, beta);
+params_poly = pack_polytope_params(A1, b1, beta, Lscale);
 
 %% ----------------- Superellipsoid -----------------
 a = 0.5; b = 1.0; c = 1.5;
@@ -48,29 +59,21 @@ bounds_se   = radial_bounds_mex(3, params_se,   optr);
 bounds_sec  = radial_bounds_mex(4, params_sec,  optr);
 bounds_tc   = radial_bounds_mex(5, params_tc,   optr);
 
-%% ----------------- Poses g1, g2 -----------------
-g1 = eye(4);
-
-g2 = [ ...
-    0.821168,   0.557509,  -0.121927,  -1.82107;
-    0.123649,  0.0347633,   0.991717,  -2.76868;
-    0.557129,  -0.829443,  -0.0403888, -0.302319;
-    0, 0, 0, 1];
 
 %% ----------------- ProblemData P -----------------
 P = struct();
 P.g1 = g1;
 P.g2 = g2;
-P.shape_id1 = 3;
-P.shape_id2 = 3;
-P.params1 = params_se;
-P.params2 = params_se;
+P.shape_id1 = 2;
+P.shape_id2 = 2;
+P.params1 = params_poly;
+P.params2 = params_poly;
 
 %% ----------------- SolveData S (your new API) -----------------
 S = struct();
 S.P = P;
-S.bounds1 = bounds_se;
-S.bounds2 = bounds_se;
+S.bounds1 = bounds_poly;
+S.bounds2 = bounds_poly;
 
 %% ----------------- NewtonOptions opt -----------------
 opt = struct();
@@ -82,6 +85,7 @@ opt.verbose = false;
 %% ----------------- Surrogate options -----------------
 sopt = struct();
 sopt.fS_values = [1, 3, 5, 7];  % same as your snippet
+sopt.enable_scaling = true;
 % (If your mex expects more fields, add them here.)
 
 %% ----------------- Call iDCOL solver -----------------
@@ -113,7 +117,14 @@ if out.converged
     fprintf('        fS_used = %.0f\n', out.fS_used);
     fprintf('        fS_attempts = %.0f\n', out.fS_attempts_used);
     fprintf('        iters = %.0f\n', out.iters_used);
+
+    fprintf('        F =\n');
+    disp(out.F);
     fprintf('        ||F|| = %.3e\n', out.final_F_norm);
+
+    fprintf('        J =\n');
+    disp(out.J);
+    
     fprintf('        alpha = %.16g\n', alpha);
     fprintf('        x = [%.16g %.16g %.16g]\n', x(1), x(2), x(3));
     fprintf('        lambda1 = %.16g\n', lambda1);

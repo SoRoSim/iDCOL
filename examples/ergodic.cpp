@@ -176,6 +176,7 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
 
     SurrogateOptions sopt;
     sopt.fS_values = {1, 3, 5, 7};
+    sopt.enable_scaling = true;
 
     double r_min = 0.1 * std::min(s1.bounds.Rin,  s2.bounds.Rin);
     double r_max = 2.0 * std::max(s1.bounds.Rout, s2.bounds.Rout);
@@ -197,7 +198,7 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
         std::optional<Guess> guess =
             (use_warm_start && have_guess) ? std::optional<Guess>(guess0) : std::nullopt;
 
-        SolveResult out = idcol_solve(S, opt, guess, sopt);
+        SolveResult out = idcol_solve(S, guess, opt, sopt);
 
         //x0 = out.newton.x; alpha0 = out.newton.alpha; lambda10 = out.newton.lambda1; lambda20 = out.newton.lambda2;
 
@@ -291,10 +292,10 @@ int main() {
 
     std::vector<ShapeSpec> shapes = {poly, se, sec, tc};
 
-    for (const auto& s1 : shapes)
-        for (const auto& s2 : shapes)
-            run_case(s1, s2, false);
-    //run_case(sec, sec);
+    //for (const auto& s1 : shapes)
+    //    for (const auto& s2 : shapes)
+    //        run_case(s1, s2, false);
+    run_case(poly, poly,true);
 
     /*
     Eigen::VectorXd params_poly = pack_polytope_params_rowmajor(A1, b1, beta);

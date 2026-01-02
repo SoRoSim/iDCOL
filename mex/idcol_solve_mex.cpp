@@ -178,12 +178,39 @@ static std::optional<idcol::Guess> parse_guess_optional(const mxArray* Gmx) {
 
 static idcol::SurrogateOptions parse_sopt_optional(const mxArray* Smx_opt) {
     idcol::SurrogateOptions sopt;
+
     if (Smx_opt == nullptr || mxIsEmpty(Smx_opt)) return sopt;
     if (!mxIsStruct(Smx_opt)) mexErrMsgIdAndTxt("idcol:badArg", "sopt must be a struct or [].");
 
     if (has_field(Smx_opt, "fS_values")) {
         sopt.fS_values = get_int_vector_optional(Smx_opt, "fS_values");
     }
+
+     // ---- geometric scaling ----
+    if (has_field(Smx_opt, "enable_scaling")) {
+        // accept logical or scalar double
+        const mxArray* f = mxGetField(Smx_opt, 0, "enable_scaling");
+        if (mxIsLogicalScalar(f)) {
+            sopt.enable_scaling = mxIsLogicalScalarTrue(f);
+        } else if (mxIsDouble(f) && !mxIsComplex(f) && mxGetNumberOfElements(f) == 1) {
+            sopt.enable_scaling = (mxGetScalar(f) != 0.0);
+        } else {
+            mexErrMsgIdAndTxt("idcol:badField", "sopt.enable_scaling must be logical or scalar.");
+        }
+    }
+
+    if (has_field(Smx_opt, "scale_mode")) {
+        const mxArray* f = mxGetField(Smx_opt, 0, "scale_mode");
+        if (!mxIsChar(f)) mexErrMsgIdAndTxt("idcol:badField", "sopt.scale_mode must be a char array.");
+        char* cstr = mxArrayToString(f);
+        if (!cstr) mexErrMsgIdAndTxt("idcol:badField", "Failed to read sopt.scale_mode.");
+        sopt.scale_mode = std::string(cstr);
+        mxFree(cstr);
+    }
+    mexPrintf("[mex] enable_scaling=%d scale_mode=%s\n",
+          (int)sopt.enable_scaling, sopt.scale_mode.c_str());
+
+
     return sopt;
 }
 
@@ -275,7 +302,7 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     idcol::NewtonOptions opt          = parse_opt_optional(Omx);
     idcol::SurrogateOptions sopt      = parse_sopt_optional(Smx_opt);
 
-    idcol::SolveResult out = idcol::idcol_solve(S, opt, guess, sopt);
+    idcol::SolveResult out = idcol::idcol_solve(S, guess, opt, sopt);
 
     plhs[0] = make_output(out);
 }

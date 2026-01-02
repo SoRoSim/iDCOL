@@ -76,21 +76,20 @@ void shape_eval_local_phi_grad(
     // -----------------------------------------
     // shape_id = 2 : Convex polytope, smooth-max
     // -----------------------------------------
-    else if (shape_id == 2)
+   else if (shape_id == 2)
     {
         if (nParams < 3) fail("Polytope params too short.");
 
-        double beta = p[0];
-        int m = (int)p[1];
-        double Lscale = p[2];
+        const double beta   = p[0];
+        const int    m      = static_cast<int>(p[1]);
+        const double Lscale = p[2];
 
-        if (m <= 0)      fail("Polytope: m must be positive.");
-        if (beta <= 0.0) fail("Polytope: beta must be > 0.");
-        if (Lscale <= 0.0) fail("Polytope: Lscale must be > 0.");
+        if (m <= 0)          fail("Polytope: m must be positive.");
+        if (!(beta  > 0.0))  fail("Polytope: beta must be > 0.");
+        if (!(Lscale > 0.0)) fail("Polytope: Lscale must be > 0.");
 
         const std::size_t expected = 3 + 4 * static_cast<std::size_t>(m);
-        if (nParams != expected)
-            fail("Polytope params size must be 3 + 4*m.");
+        if (nParams != expected) fail("Polytope params size must be 3 + 4*m.");
 
         const double* A_data = p + 3;
         const double* b_data = p + 3 + 3*m;
@@ -98,38 +97,38 @@ void shape_eval_local_phi_grad(
         Eigen::Map<const Eigen::Matrix<double,Eigen::Dynamic,3>> A(A_data, m, 3);
         Eigen::Map<const Eigen::VectorXd> b(b_data, m);
 
-        // 1) find zmax = max_i (a_i' y - b_i)
+        const double invL = 1.0 / Lscale;
+
+        // Option A: z_hat = (a_i^T y - b_i)/Lscale
         double zmax = -std::numeric_limits<double>::infinity();
         for (int i = 0; i < m; ++i) {
-            double zi = A.row(i).dot(y) - b(i);
-            if (zi > zmax) zmax = zi;
+            const double zi_hat = (A.row(i).dot(y) - b(i)) * invL;
+            if (zi_hat > zmax) zmax = zi_hat;
         }
 
-        // 2) accumulate sum_ez and grad in one pass
         double sum_ez = 0.0;
         grad_phi.setZero();
+
         for (int i = 0; i < m; ++i) {
-            double zi = A.row(i).dot(y) - b(i);
-            double wi_unnorm = std::exp(beta * (zi - zmax));
+            const double zi_hat = (A.row(i).dot(y) - b(i)) * invL;
+            const double wi_unnorm = std::exp(beta * (zi_hat - zmax));
             sum_ez += wi_unnorm;
-            grad_phi.noalias() += wi_unnorm * A.row(i).transpose();
+            // d(zi_hat)/dy = a_i / Lscale
+            grad_phi.noalias() += wi_unnorm * (A.row(i).transpose() * invL);
         }
 
-        // 3) finalize phi and normalize grad
+        // finalize
         phi = zmax + (1.0 / beta) * std::log(sum_ez);
 
         if (sum_ez > 0.0) {
             grad_phi /= sum_ez;
         } else {
-            // extremely pathological case; shouldn't really happen
             grad_phi.setZero();
         }
 
-        phi /= Lscale;
-        grad_phi /= Lscale;
-
         return;
     }
+
 
     // ---------------------------------
     // shape_id = 3 : Superellipsoid
@@ -448,21 +447,18 @@ void shape_eval_local(
     // shape_id = 2 : Convex polytope, smooth-max
     // -----------------------------------------
     else if (shape_id == 2) {
-        if (nParams < 3) {
-            fail("Polytope params too short.");
-        }
+        if (nParams < 3) fail("Polytope params too short.");
 
-        double beta = p[0];
-        int m = static_cast<int>(p[1]);
-        double Lscale = p[2];
+        const double beta   = p[0];
+        const int    m      = static_cast<int>(p[1]);
+        const double Lscale = p[2];
 
-        if (m <= 0)      fail("Polytope: m must be positive.");
-        if (beta <= 0.0) fail("Polytope: beta must be > 0.");
-        if (Lscale <= 0.0) fail("Polytope: Lscale must be > 0.");
+        if (m <= 0)          fail("Polytope: m must be positive.");
+        if (!(beta  > 0.0))  fail("Polytope: beta must be > 0.");
+        if (!(Lscale > 0.0)) fail("Polytope: Lscale must be > 0.");
 
         const std::size_t expected = 3 + 4 * static_cast<std::size_t>(m);
-        if (nParams != expected)
-            fail("Polytope params size must be 3 + 4*m.");
+        if (nParams != expected) fail("Polytope params size must be 3 + 4*m.");
 
         const double* A_data = p + 3;
         const double* b_data = p + 3 + 3*m;
@@ -470,69 +466,55 @@ void shape_eval_local(
         Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, 3>> A(A_data, m, 3);
         Eigen::Map<const Eigen::VectorXd> b(b_data, m);
 
-        // -----------------------------
-        // 1) Find zmax = max_i (a_i' y - b_i)
-        // -----------------------------
-        double zmax;
-        {
-            // use the first face to initialize
-            Eigen::Vector3d a0 = A.row(0).transpose();
-            double z0 = a0.dot(y) - b(0);
-            zmax = z0;
+        const double invL = 1.0 / Lscale;
 
-            for (int i = 1; i < m; ++i) {
-                Eigen::Vector3d ai = A.row(i).transpose();
-                double zi = ai.dot(y) - b(i);
-                if (zi > zmax) {
-                    zmax = zi;  
-                }
-            }
+        // -----------------------------
+        // 1) Find zmax_hat = max_i ((a_i' y - b_i)/Lscale)
+        // -----------------------------
+        double zmax_hat = (A.row(0).dot(y) - b(0)) * invL;
+        for (int i = 1; i < m; ++i) {
+            const double zi_hat = (A.row(i).dot(y) - b(i)) * invL;
+            if (zi_hat > zmax_hat) zmax_hat = zi_hat;
         }
 
         // -----------------------------
-        // 2) Accumulate sum_u, grad, and M
-        //    u_i = exp(beta * (z_i - zmax))
-        //    G   = sum u_i * a_i
-        //    M   = sum u_i * a_i a_i'
+        // 2) Accumulate sum_u, grad, and M in normalized units
+        //    u_i = exp(beta * (z_i_hat - zmax_hat))
+        //    grad = sum u_i * (a_i/Lscale)
+        //    M    = sum u_i * (a_i/Lscale)(a_i/Lscale)^T
         // -----------------------------
         double sum_u = 0.0;
         grad_phi.setZero();
         Eigen::Matrix3d M = Eigen::Matrix3d::Zero();
 
         for (int i = 0; i < m; ++i) {
-            Eigen::Vector3d ai = A.row(i).transpose();
-            double zi = ai.dot(y) - b(i);
-            double ui = std::exp(beta * (zi - zmax));  // unnormalized weight
+            const double zi_hat = (A.row(i).dot(y) - b(i)) * invL;
+            const double ui = std::exp(beta * (zi_hat - zmax_hat));
+
+            // a_hat = a_i / Lscale
+            const Eigen::Vector3d a_hat = A.row(i).transpose() * invL;
 
             sum_u += ui;
-            grad_phi.noalias() += ui * ai;
-            M.noalias()        += ui * (ai * ai.transpose());
+            grad_phi.noalias() += ui * a_hat;
+            M.noalias()        += ui * (a_hat * a_hat.transpose());
         }
 
-        // -----------------------------
-        // 3) Finalize phi, grad, hess
-        // -----------------------------
         if (sum_u <= 0.0) {
-            // extremely pathological; treat as "far inside"
-            phi = zmax;      // arbitrary; shouldn't really happen
+            phi = zmax_hat;
             grad_phi.setZero();
             hess_phi.setZero();
             return;
         }
-        
-        phi = zmax + (1.0 / beta) * std::log(sum_u);
-        
-        // grad = (1/sum_u) * G
+
+        // -----------------------------
+        // 3) Finalize phi, grad, hess (in normalized units)
+        // -----------------------------
+        phi = zmax_hat + (1.0 / beta) * std::log(sum_u);
+
         grad_phi /= sum_u;
 
-        // A^T diag(w) A = (1/sum_u) * M
-        // A^T (w w^T) A = grad * grad^T
-        // H = beta * (A^T diag(w) A - A^T w w^T A)
+        // Hessian of smooth-max: beta * (E[a a^T] - E[a]E[a]^T)
         hess_phi = (beta / sum_u) * M - beta * (grad_phi * grad_phi.transpose());
-
-        phi      /= Lscale;
-        grad_phi /= Lscale;
-        hess_phi /= Lscale;
 
         return;
     }

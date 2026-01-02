@@ -75,6 +75,8 @@ int main() {
     b1 << 1.0, 1.0, 1.0, 1.0,
         5.0/3.0, 5.0/3.0, 5.0/3.0, 5.0/3.0;
 
+    //b1 *= 10;
+
     // ----------------- Superellipsoid--------------
     const double a = 0.5;
     const double b = 1.0;
@@ -110,8 +112,8 @@ int main() {
     RadialBounds bounds_sec = compute_radial_bounds_local(4, params_sec, optr);
     RadialBounds bounds_tc = compute_radial_bounds_local(5, params_tc, optr);
 
-    //std::cout << "r_1,in  = " << bounds_tc.Rin  << "\n";
-    //std::cout << "r_1,out  = " << bounds_tc.Rout  << "\n";
+    //std::cout << "r_1,in  = " << bounds_poly.Rin  << "\n";
+    //std::cout << "r_1,out  = " << bounds_poly.Rout  << "\n";
     //std::exit(0);
 
     // ----------------- Poses g1, g2 ------------------------------
@@ -121,9 +123,9 @@ int main() {
     ProblemData P;
     P.g1 = g1;
     P.shape_id1 = 2; 
-    P.shape_id2 = 3; 
+    P.shape_id2 = 2; 
     P.params1 = params_poly;
-    P.params2 = params_se;
+    P.params2 = params_poly;
 
     // Face-face case
     /*Eigen::Vector3d u(2.0, -1.0, 2.0);
@@ -144,16 +146,18 @@ int main() {
         0.557129,  -0.829443,  -0.0403888, -0.302319,
         0, 0, 0, 1;
 
+    //P.g2.topRightCorner<3,1>() *= 10;
+
     SolveData S;
     S.P = P;
     S.bounds1 = bounds_poly;
-    S.bounds2 = bounds_se;
+    S.bounds2 = bounds_poly;
     
     NewtonOptions opt;
     opt.L = 1; //scale factor for x. change with: bounds_poly.Rout + bounds_poly.Rout?
     opt.max_iters = 30;
     opt.tol = 1e-10;
-    opt.verbose = false;
+    opt.verbose = true;
 
     Eigen::Vector3d x;
     double alpha;
@@ -167,12 +171,14 @@ int main() {
     // Build surrogate schedule (default is {1,3}, but you can set explicitly)    
     idcol::SurrogateOptions sopt;
     sopt.fS_values = {1};   // or {1,2,4}, etc.
+    sopt.enable_scaling = false;
 
     
     idcol::SolveResult out;
     //Call with no initial guess
     auto t0 = std::chrono::high_resolution_clock::now();
-    out = idcol::idcol_solve(S, opt, std::nullopt, sopt); 
+    out = idcol::idcol_solve(S);
+    //out = idcol::idcol_solve(S, std::nullopt, opt, sopt); 
     auto t1 = std::chrono::high_resolution_clock::now();
 
     // Extract solution (original space)
@@ -191,16 +197,18 @@ int main() {
 
     if (out.newton.converged) {
         std::cout << "[iDCOL] converged = 1\n"
-                << "        time_us = " << t_total_us << "\n"
-                << "        fS_used = " << out.fS_used << "\n"
-                << "        fS_attempts = " << out.fS_attempts_used << "\n"
-                << "        iters = " << out.newton.iters_used << "\n"
-                << "        ||F|| = " << out.newton.final_F_norm << "\n"
-                << "        alpha = " << alpha << "\n"
-                << "        x = " << x.transpose() << "\n"
-                << "        lambda1 = " << lambda1 << "\n"
-                << "        lambda2 = " << lambda2 << "\n"
-                << "        normal = " << grad_star.head<3>().transpose() << "\n";
+              << "        time_us = " << t_total_us << "\n"
+              << "        fS_used = " << out.fS_used << "\n"
+              << "        fS_attempts = " << out.fS_attempts_used << "\n"
+              << "        F = \n" << out.newton.F << "\n"
+              << "        J = \n" << out.newton.J << "\n"
+              << "        iters = " << out.newton.iters_used << "\n"
+              << "        ||F|| = " << out.newton.final_F_norm << "\n"
+              << "        alpha = " << alpha << "\n"
+              << "        x = " << x.transpose() << "\n"
+              << "        lambda1 = " << lambda1 << "\n"
+              << "        lambda2 = " << lambda2 << "\n"
+              << "        normal = " << grad_star.head<3>().transpose() << "\n";
     } else {
         std::cout << "[iDCOL] converged = 0\n"
                 << "        time_us = " << t_total_us << "\n"
