@@ -207,9 +207,6 @@ static idcol::SurrogateOptions parse_sopt_optional(const mxArray* Smx_opt) {
         sopt.scale_mode = std::string(cstr);
         mxFree(cstr);
     }
-    mexPrintf("[mex] enable_scaling=%d scale_mode=%s\n",
-          (int)sopt.enable_scaling, sopt.scale_mode.c_str());
-
 
     return sopt;
 }
