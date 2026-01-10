@@ -1,4 +1,5 @@
 D:/Research/Soft Robotics Toolbox/SoRoSim GitHub/iDCOL/build/CMakeFiles/idcol_example.dir
 D:/Research/Soft Robotics Toolbox/SoRoSim GitHub/iDCOL/build/CMakeFiles/idcol_ergodic.dir
+D:/Research/Soft Robotics Toolbox/SoRoSim GitHub/iDCOL/build/CMakeFiles/idcol_bench.dir
 D:/Research/Soft Robotics Toolbox/SoRoSim GitHub/iDCOL/build/CMakeFiles/ALL_BUILD.dir
 D:/Research/Soft Robotics Toolbox/SoRoSim GitHub/iDCOL/build/CMakeFiles/ZERO_CHECK.dir

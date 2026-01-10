@@ -402,6 +402,82 @@ inline SolveResult idcol_solve(const SolveData& S,
             out = best_out;
             out.newton.message += " | attempted n-continuation (fallback)";
         }
+
+        // Beta-continuation for shapes with beta parameter (shape_id 2 and 5)
+        if (!out.newton.converged) {
+            const bool body1_has_beta = (P_in.shape_id1 == 2 || P_in.shape_id1 == 5);
+            const bool body2_has_beta = (P_in.shape_id2 == 2 || P_in.shape_id2 == 5);
+            double beta1 = body1_has_beta ? P_in.params1(0) : 0.0;
+            double beta2 = body2_has_beta ? P_in.params2(0) : 0.0;
+            double beta_target = std::max(beta1, beta2);
+
+            // Only attempt continuation when beta_target is reasonable (>1.0)
+            if ((body1_has_beta || body2_has_beta) && std::isfinite(beta_target) && beta_target > 1.0) {
+                std::vector<double> beta_schedule;
+                beta_schedule.push_back(beta_target / 4.0);
+                beta_schedule.push_back(beta_target / 2.0);
+                beta_schedule.push_back(beta_target);
+
+                // start from the best we already have
+                idcol::SolveResult best_out = out;
+                double best_norm = out.newton.final_F_norm;
+
+                std::optional<idcol::Guess> guess_k = std::nullopt;
+
+                for (double bk : beta_schedule) {
+                    if (bk <= 0.0) continue;
+
+                    // build modified solve data (copy P + bounds)
+                    idcol::SolveData Sk = S;
+
+                    if (body1_has_beta) {
+                        // do not increase beta beyond original; set to min(original, bk)
+                        Sk.P.params1(0) = std::min(P_in.params1(0), bk);
+                    }
+                    if (body2_has_beta) {
+                        Sk.P.params2(0) = std::min(P_in.params2(0), bk);
+                    }
+
+                    // solve at this beta, warm-starting if we have a guess
+                    idcol::SolveResult out_k = idcol::idcol_solve(Sk, guess_k, opt_in, sopt);
+
+                    // update best
+                    if (std::isfinite(out_k.newton.final_F_norm) && out_k.newton.final_F_norm < best_norm) {
+                        best_out = out_k;
+                        best_norm = out_k.newton.final_F_norm;
+                    }
+
+                    if (out_k.newton.converged) {
+                        // warm start next stage
+                        idcol::Guess g;
+                        g.x = out_k.newton.x;
+                        g.alpha = out_k.newton.alpha;
+                        g.lambda1 = out_k.newton.lambda1;
+                        g.lambda2 = out_k.newton.lambda2;
+                        guess_k = g;
+
+                        // if we reached original beta, return this result
+                        if (bk == beta_target) {
+                            out = out_k;
+                            out.newton.message += " | converged via beta-continuation";
+                            return out;
+                        }
+                    } else {
+                        // if stage fails, still warm start from best found so far
+                        idcol::Guess g;
+                        g.x = best_out.newton.x;
+                        g.alpha = best_out.newton.alpha;
+                        g.lambda1 = best_out.newton.lambda1;
+                        g.lambda2 = best_out.newton.lambda2;
+                        guess_k = g;
+                    }
+                }
+
+                // if continuation didn't fully converge, return best we found
+                out = best_out;
+                out.newton.message += " | attempted beta-continuation (fallback)";
+            }
+        }
     }
 
     return out;

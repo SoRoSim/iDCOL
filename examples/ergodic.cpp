@@ -184,7 +184,7 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
 
     SurrogateOptions sopt;
     sopt.fS_values = {1, 3, 5, 7, 9};
-    sopt.enable_scaling = false; //need work on the geometric scaling!
+    sopt.enable_scaling = true; 
 
     double r_min = 0.1 * std::min(s1.bounds.Rin,  s2.bounds.Rin);
     double r_max = 2.0 * std::max(s1.bounds.Rout, s2.bounds.Rout);
@@ -373,7 +373,7 @@ int main() {
     //for (int i = 0; i < 5; ++i){
         //run_case(poly, poly, true);
         //run_case(poly, se, true);
-        //run_case(se, se, true);
+        //run_case(se, se, false);
     //}
 
 }
