@@ -47,13 +47,18 @@ NewtonResult solve_idcol_newton(
         bool solved = false;
         iters_used = 0;
 
+        // Reuse decomposition objects and temporaries to avoid repeated allocations
+        Eigen::PartialPivLU<Matrix6d> lu;
+        Eigen::LLT<Matrix6d> llt;
+        Matrix6d A;
+
         for (int iter = 0; iter < opt.max_iters; ++iter) {
             iters_used = iter + 1;
 
             eval_F_J(x, s, lambda1, lambda2, P, F, J);
 
-            const double Fn = F.norm();
-            if (Fn < opt.tol) { solved = true; break; }
+            const double Fn2 = F.squaredNorm();
+            if (Fn2 < (opt.tol * opt.tol)) { solved = true; break; }
 
             const double m0 = idcol::merit_from_F(F);
 
@@ -68,10 +73,10 @@ NewtonResult solve_idcol_newton(
             Vector6d dz_hat;
             bool have_step = false;
 
-            Eigen::PartialPivLU<Matrix6d> lu(JD);
+            lu.compute(JD);
             dz_hat = lu.solve(-F);
 
-            if (dz_hat.allFinite() && dz_hat.norm() <= opt.dz_hat_norm_max) {
+            if (dz_hat.allFinite() && dz_hat.squaredNorm() <= (opt.dz_hat_norm_max * opt.dz_hat_norm_max)) {
                 have_step = true;
             }
 
@@ -82,11 +87,10 @@ NewtonResult solve_idcol_newton(
 
                 double mu = 1e-8;
                 for (int k = 0; k < 10; ++k) {
-                    Matrix6d A;
                     A.noalias() = JD.transpose() * JD;
                     A.diagonal().array() += mu;
 
-                    Eigen::LLT<Matrix6d> llt(A);
+                    llt.compute(A);
                     if (llt.info() == Eigen::Success) {
                         dz_hat = llt.solve(rhs);
                         have_step = dz_hat.allFinite();
@@ -170,10 +174,11 @@ NewtonResult solve_idcol_newton(
 
             if (!accepted) {
                 // Rescue: LM sweep on unscaled J 
-                const double m0r = idcol::merit_from_F(F);
+                // reuse previously computed merit and gradient to avoid recomputation
+                const double m0r = m0;
 
-                Vector6d g;
-                g.noalias() = J.transpose() * F;
+                // g_m holds J^T * F computed earlier; reuse it
+                Vector6d& g = g_m;
 
                 Matrix6d JTJ;
                 JTJ.noalias() = J.transpose() * J;
@@ -259,7 +264,7 @@ NewtonResult solve_idcol_newton(
         Vector3d best_x = x;
         double   best_s = s;
         double   best_l1 = lambda1, best_l2 = lambda2;
-        double   best_Fn = F.norm();
+        double   best_Fn = F.squaredNorm();
 
         auto attempt = [&](double s_init) -> bool {
             ++attempts_used;
@@ -275,9 +280,9 @@ NewtonResult solve_idcol_newton(
 
             bool ok = run_newton(x_try, s_try, l1_try, l2_try, F_try, J_try, it_try);
 
-            const double Fn = F_try.norm();
-            if (std::isfinite(Fn) && Fn < best_Fn) {
-                best_Fn = Fn;
+            const double Fn2 = F_try.squaredNorm();
+            if (std::isfinite(Fn2) && Fn2 < best_Fn) {
+                best_Fn = Fn2;
                 best_x = x_try; best_s = s_try; best_l1 = l1_try; best_l2 = l2_try;
             }
 
@@ -303,7 +308,15 @@ NewtonResult solve_idcol_newton(
     }
 
     // Final eval for returned outputs
-    eval_F_J(x, s, lambda1, lambda2, P, out.F, out.J);
+    // If the solver converged (or an attempt succeeded) then `F` and `J` already
+    // correspond to the current (x,s,lambda) and we can reuse them. Only call
+    // `eval_F_J` when we are returning a best result from restarts (not converged).
+    if (!converged) {
+        eval_F_J(x, s, lambda1, lambda2, P, out.F, out.J);
+    } else {
+        out.F = F;
+        out.J = J;
+    }
 
     out.x = x;
     out.s = s;

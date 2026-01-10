@@ -1,9 +1,17 @@
 // examples/main.cpp
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
+#include <Eigen/SVD>
 #include <iostream>
 #include <cmath>
 #include <chrono>
+#include <vector>
+#include <numeric>
+#include <algorithm>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <string>
 #include "core/idcol_newton.hpp"
 #include "core/radial_bounds.hpp"
 #include "core/shape_core.hpp"
@@ -175,8 +183,8 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
     opt.verbose = false;
 
     SurrogateOptions sopt;
-    sopt.fS_values = {1, 3, 5, 7};
-    sopt.enable_scaling = true;
+    sopt.fS_values = {1, 3, 5, 7, 9};
+    sopt.enable_scaling = false; //need work on the geometric scaling!
 
     double r_min = 0.1 * std::min(s1.bounds.Rin,  s2.bounds.Rin);
     double r_max = 2.0 * std::max(s1.bounds.Rout, s2.bounds.Rout);
@@ -186,9 +194,24 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
     const int N = static_cast<int>(std::round(t_max / dt)) + 1;
 
     int failed = 0;
+    std::vector<double> durations_us;
+    durations_us.reserve(N);
+    std::vector<int> iters_used;
+    iters_used.reserve(N);
+    std::vector<double> j_sigmas;
+    j_sigmas.reserve(N);
+    std::vector<double> j_ratios;
+    j_ratios.reserve(N);
     //Eigen::Vector3d x0; double alpha0=1.0, lambda10=1.0, lambda20=1.0;
 
-    auto t0 = std::chrono::high_resolution_clock::now();
+    // CSV output for this case
+    std::ofstream csv;
+    std::string csv_name = s1.name + std::string("-") + s2.name + std::string(".csv");
+    csv.open(csv_name);
+    if (!csv) std::cerr << "Warning: could not open CSV file '" << csv_name << "' for writing\n";
+    bool csv_header_written = false;
+
+    using Clock = std::chrono::steady_clock;
 
     for (int i = 0; i < N; ++i) {
         double t = i * dt;
@@ -198,7 +221,11 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
         std::optional<Guess> guess =
             (use_warm_start && have_guess) ? std::optional<Guess>(guess0) : std::nullopt;
 
+        auto solve_t0 = Clock::now();
         SolveResult out = idcol_solve(S, guess, opt, sopt);
+        auto solve_t1 = Clock::now();
+
+        double dur_us = std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(solve_t1 - solve_t0).count();
 
         //x0 = out.newton.x; alpha0 = out.newton.alpha; lambda10 = out.newton.lambda1; lambda20 = out.newton.lambda2;
 
@@ -207,7 +234,7 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
             std::cout << "\nFAIL case " << s1.name << "-" << s2.name
                     << " i=" << i << " t=" << t << "\n";
 
-            std::cout << "g2=\n" << P.g2 << "\n";
+            std::cout << "g2=\n" << S.P.g2 << "\n";
             std::cout << "x=" << out.newton.x.transpose() << "\n";
             std::cout << "alpha=" << out.newton.alpha
                     << " lambda1=" << out.newton.lambda1
@@ -218,28 +245,76 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
             std::exit(0);
             */
             failed++;
-            
-
         }
         else {
+            // Write CSV header on first successful solve and then append the row
+            if (csv.is_open()) {
+                if (!csv_header_written) {
+                    int xlen = static_cast<int>(out.newton.x.size());
+                    csv << "t";
+                    for (int k = 0; k < xlen; ++k) csv << ",x" << k;
+                    csv << ",alpha\n";
+                    csv_header_written = true;
+                }
+
+                csv << std::setprecision(15) << t;
+                for (int k = 0; k < out.newton.x.size(); ++k) csv << "," << std::setprecision(15) << out.newton.x(k);
+                csv << "," << std::setprecision(15) << out.newton.alpha << "\n";
+            }
+
+            durations_us.push_back(dur_us);
+            iters_used.push_back(out.newton.iters_used);
+            {
+                Eigen::MatrixXd Jmat = out.newton.J;
+                Eigen::JacobiSVD<Eigen::MatrixXd> svd(Jmat, Eigen::ComputeThinU | Eigen::ComputeThinV);
+                Eigen::VectorXd svals = svd.singularValues();
+                double sigma_min = svals.minCoeff();
+                double sigma_max = svals.maxCoeff();
+                j_sigmas.push_back(sigma_min);
+                double ratio = (sigma_max > 0.0) ? (sigma_min / sigma_max) : 0.0;
+                j_ratios.push_back(ratio);
+            }
             guess0.x       = out.newton.x;
             guess0.alpha   = out.newton.alpha;
             guess0.lambda1 = out.newton.lambda1;
             guess0.lambda2 = out.newton.lambda2;
             have_guess = true;
         }
- 
+
     }
 
-    auto t1 = std::chrono::high_resolution_clock::now();
-    double avg_us =
-        std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(t1 - t0).count() / double(N);
+    if (csv.is_open()) csv.close();
 
-    double success = 100.0 * double(N - failed) / double(N);
+    double success = 100.0 * double(durations_us.size()) / double(N);
+
+    double avg_us = 0.0, median_us = 0.0, stddev_us = 0.0;
+    double avg_iters = 0.0;
+    if (!durations_us.empty()) {
+        double sum = std::accumulate(durations_us.begin(), durations_us.end(), 0.0);
+        avg_us = sum / double(durations_us.size());
+        std::sort(durations_us.begin(), durations_us.end());
+        median_us = durations_us[durations_us.size() / 2];
+        double sq = 0.0;
+        for (double v : durations_us) sq += (v - avg_us) * (v - avg_us);
+        stddev_us = std::sqrt(sq / durations_us.size());
+    }
+    if (!iters_used.empty()) {
+        double sumi = std::accumulate(iters_used.begin(), iters_used.end(), 0.0);
+        avg_iters = sumi / double(iters_used.size());
+    }
+
+    double min_ratio = 0.0;
+    if (!j_ratios.empty()) {
+        min_ratio = *std::min_element(j_ratios.begin(), j_ratios.end());
+    }
 
     std::cout << "CASE " << s1.name << "-" << s2.name
               << " | avg_us=" << avg_us
-              << " | success=" << success << "%\n";
+              << " | median_us=" << median_us
+              << " | stddev_us=" << stddev_us
+              << " | avg_iters=" << avg_iters
+              << " | min_sigma/max_sigma=" << min_ratio
+              << " | success=" << success << "% (" << durations_us.size() << " succ, " << failed << " failed)\n";
 }
 
 
@@ -295,6 +370,10 @@ int main() {
     for (const auto& s1 : shapes)
         for (const auto& s2 : shapes)
             run_case(s1, s2, false);
-    //run_case(poly, poly,true);
+    //for (int i = 0; i < 5; ++i){
+        //run_case(poly, poly, true);
+        //run_case(poly, se, true);
+        //run_case(se, se, true);
+    //}
 
 }
