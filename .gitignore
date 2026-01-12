@@ -20,3 +20,6 @@
 *.a
 *.lib
 *.pdb
+
+.obsidian/
+Vault/
