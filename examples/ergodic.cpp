@@ -184,7 +184,7 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
 
     SurrogateOptions sopt;
     sopt.fS_values = {1, 3, 5, 7, 9};
-    sopt.enable_scaling = true; 
+    sopt.enable_scaling = false; //make true if needed
 
     double r_min = 0.1 * std::min(s1.bounds.Rin,  s2.bounds.Rin);
     double r_max = 2.0 * std::max(s1.bounds.Rout, s2.bounds.Rout);
@@ -202,7 +202,6 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
     j_sigmas.reserve(N);
     std::vector<double> j_ratios;
     j_ratios.reserve(N);
-    //Eigen::Vector3d x0; double alpha0=1.0, lambda10=1.0, lambda20=1.0;
 
     // CSV output for this case
     std::ofstream csv;
@@ -313,7 +312,7 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
               << " | median_us=" << median_us
               << " | stddev_us=" << stddev_us
               << " | avg_iters=" << avg_iters
-              << " | min_sigma/max_sigma=" << min_ratio
+              << " | min_sigma_ratio=" << min_ratio
               << " | success=" << success << "% (" << durations_us.size() << " succ, " << failed << " failed)\n";
 }
 
@@ -355,7 +354,7 @@ int main() {
     const double bc = 1.5;
         
     const double beta = 20.0;
-    const int n = 8;
+    int n = 8;
     
     RadialBoundsOptions optr;
     optr.num_starts = 1000;
@@ -367,13 +366,19 @@ int main() {
 
     std::vector<ShapeSpec> shapes = {poly, se, sec, tc};
 
+    bool warm_start = true;
+
     for (const auto& s1 : shapes)
         for (const auto& s2 : shapes)
-            run_case(s1, s2, false);
-    //for (int i = 0; i < 5; ++i){
-        //run_case(poly, poly, true);
-        //run_case(poly, se, true);
-        //run_case(se, se, false);
-    //}
-
+            run_case(s1, s2, warm_start);
+    
+    /*
+    n = 1;
+    se = make_se(n, a, b, c, optr);
+    for (int i = 0; i < 5; ++i){
+        run_case(poly, poly, warm_start);
+        run_case(poly, se, warm_start);
+        run_case(se, se, warm_start);
+    }
+    */
 }

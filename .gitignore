@@ -1,2 +1,10 @@
 # Ignore all CSV files
 *.csv
+/build/
+/build-*/
+/*.o
+/*.obj
+/*.so
+/*.dll
+/*.dylib
+*.mex*
