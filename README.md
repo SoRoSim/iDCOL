@@ -14,15 +14,11 @@
 
 # 
 
-# CMake (>= 3.16)
+# \- CMake (>= 3.16)
 
-# 
+# \- A C++17-compatible compiler
 
-# A C++17-compatible compiler
-
-# 
-
-# (Optional) MATLAB with C++17 MEX support for the MATLAB interface
+# \- (Optional) MATLAB with C++17 MEX support for the MATLAB interface
 
 # 
 
@@ -34,41 +30,43 @@
 
 # 
 
+# ```bash
+
 # mkdir build
 
 # cmake -S . -B build -DCMAKE\_BUILD\_TYPE=Release
 
 # cmake --build build
 
-# 
+# ```
 
 # 
 
-# The executable will be generated in the build directory (or build/Release for multi-config generators such as Visual Studio).
+# The executable will be generated in the build directory (or `build/Release` for multi-config generators such as Visual Studio).
 
 # 
 
-# \## Running the C++ example
+# \### Running the C++ example
 
 # 
 
 # On Windows:
 
-# 
+# ```bat
 
 # build\\Release\\idcol\_ergodic.exe
 
-# 
+# ```
 
 # 
 
 # On Linux/macOS:
 
-# 
+# ```bash
 
 # ./build/idcol\_ergodic
 
-# 
+# ```
 
 # 
 
@@ -88,17 +86,19 @@
 
 # 
 
+# ```matlab
+
 # build\_mex
 
-# 
+# ```
 
 # 
 
-# The compiled MEX binaries will be placed in the mex/ directory.
+# The compiled MEX binaries will be placed in the `mex/` directory.
 
 # 
 
-# \## MATLAB example
+# \### MATLAB example
 
 # 
 
@@ -106,7 +106,25 @@
 
 # 
 
+# ```matlab
+
 # % Example usage
 
 # \[z\_star, Jc] = idcol\_solve\_mex(...);
+
+# ```
+
+# 
+
+# \## Notes
+
+# 
+
+# \- Generated build directories and compiled MEX binaries are not tracked in the repository.
+
+# \- The `mex/` directory contains source files (`.cpp`) and build scripts only.
+
+# \- The framework is designed to be modular and extensible for use in contact-aware simulation and optimization pipelines.
+
+# 
 
