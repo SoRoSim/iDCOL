@@ -1,10 +1,22 @@
-# Ignore all CSV files
+# Ignore all output files
 *.csv
+*.mp4
+
+# build directories
 /build/
 /build-*/
-/*.o
-/*.obj
-/*.so
-/*.dll
-/*.dylib
-*.mex*
+
+# compiled MEX binaries
+*.mexw64
+*.mexa64
+*.mexmaci64
+
+# common build artifacts
+*.o
+*.obj
+*.so
+*.dll
+*.dylib
+*.a
+*.lib
+*.pdb
