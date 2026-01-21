@@ -27,12 +27,12 @@ add_executable(idcol_ergodic
 # ---------- Include paths ----------
 target_include_directories(idcol_example PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/eigen-3.4.0
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/eigen
 )
 
 target_include_directories(idcol_ergodic PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/eigen-3.4.0
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/eigen
 )
 
 # ---------- Optimization (Release only) ----------

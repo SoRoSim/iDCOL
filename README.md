@@ -4,6 +4,15 @@ iDCOL is a differentiable collision framework for convex contact geometry, desig
 
 The framework provides efficient collision detection together with analytical derivatives of contact kinematics, and can be integrated as a modular component within physics engines and trajectory optimization frameworks.
 
+## Getting the source
+
+This repository uses Git submodules.
+
+After cloning, initialize dependencies with:
+
+```bash
+git submodule update --init --recursive
+```
 # Requirements
 
  \- CMake (>= 3.16)

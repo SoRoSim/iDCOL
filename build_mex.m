@@ -3,7 +3,7 @@ function build_mex()
     rootDir  = fileparts(thisFile);
 
     inc1  = ['-I' rootDir];
-    inc2  = ['-I' fullfile(rootDir,'eigen-3.4.0')];
+    inc2  = ['-I' fullfile(rootDir,'external','eigen')];
 
     outd = fullfile(rootDir,'mex');
     if ~exist(outd,'dir'), mkdir(outd); end
@@ -19,7 +19,9 @@ function build_mex()
         fullfile('mex','idcol_solve_mex.cpp'), ...
         fullfile('core','shape_core.cpp'), ...
         fullfile('core','idcol_kkt.cpp'), ...
-        fullfile('core','idcol_newton.cpp'));
+        fullfile('core','idcol_newton.cpp'), ...
+        fullfile('core','idcol_solve.cpp'));
+
 
     mex('-O','-outdir',outd,inc1,inc2,cxx17, ...
         fullfile('mex','idcol_kkt_mex.cpp'), ...
