@@ -17,13 +17,13 @@ void eval_F_J(
     double  phi1;
     Vector4d grad1;
     Matrix4d H1;
-    shape_eval_global_xa(P.g1, x, alpha, P.shape_id1, P.params1, phi1, grad1, H1);
+    shape_eval_global_xa(Eigen::Matrix4d::Identity(), x, alpha, P.shape_id1, P.params1, phi1, grad1, H1);
 
     // Evaluate phi2, grad2, H2
     double  phi2;
     Vector4d grad2;
     Matrix4d H2;
-    shape_eval_global_xa(P.g2, x, alpha, P.shape_id2, P.params2, phi2, grad2, H2);
+    shape_eval_global_xa(P.g, x, alpha, P.shape_id2, P.params2, phi2, grad2, H2);
 
    // Split gradients
     Vector3d g1x = grad1.head<3>();
@@ -102,12 +102,12 @@ void eval_F(
     // φ1, grad1
     double  phi1;
     Vector4d grad1;
-    shape_eval_global_xa_phi_grad(P.g1, x, alpha, P.shape_id1, P.params1, phi1, grad1);
+    shape_eval_global_xa_phi_grad(Eigen::Matrix4d::Identity(), x, alpha, P.shape_id1, P.params1, phi1, grad1);
 
     // φ2, grad2
     double  phi2;
     Vector4d grad2;
-    shape_eval_global_xa_phi_grad(P.g2, x, alpha, P.shape_id2, P.params2, phi2, grad2);
+    shape_eval_global_xa_phi_grad(P.g, x, alpha, P.shape_id2, P.params2, phi2, grad2);
 
     Vector3d g1x = grad1.head<3>();
     const double   g1a = grad1(3);

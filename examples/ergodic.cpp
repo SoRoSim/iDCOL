@@ -77,7 +77,7 @@ Eigen::Matrix4d getSystematicPose(double t, double r_min, double r_max) {
     return g2;
 }
 
-static Eigen::VectorXd pack_polytope_params_rowmajor(
+static Eigen::VectorXd pack_polytope_params(
     const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& A,
     const Eigen::VectorXd& b,
     double beta)
@@ -119,7 +119,18 @@ static ShapeSpec make_poly(const Eigen::Matrix<double,Eigen::Dynamic,3,Eigen::Ro
     ShapeSpec s;
     s.shape_id = 2;
     s.name = "poly";
-    s.params = pack_polytope_params_rowmajor(A, b, beta);
+    s.params = pack_polytope_params(A, b, beta);
+    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
+    return s;
+}
+
+static ShapeSpec make_tc(double beta, double rb, double rt, double ac, double bc, const RadialBoundsOptions& optr)
+{
+    ShapeSpec s;
+    s.shape_id = 3;
+    s.name = "tc";
+    Eigen::Matrix<double,5,1> p; p << beta, rb, rt, ac, bc;
+    s.params = p;
     s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
     return s;
 }
@@ -127,7 +138,7 @@ static ShapeSpec make_poly(const Eigen::Matrix<double,Eigen::Dynamic,3,Eigen::Ro
 static ShapeSpec make_se(double n, double a, double b, double c, const RadialBoundsOptions& optr)
 {
     ShapeSpec s;
-    s.shape_id = 3;
+    s.shape_id = 4;
     s.name = "se";
     Eigen::Vector4d p; p << n, a, b, c;
     s.params = p;
@@ -138,20 +149,9 @@ static ShapeSpec make_se(double n, double a, double b, double c, const RadialBou
 static ShapeSpec make_sec(double n, double r, double h, const RadialBoundsOptions& optr)
 {
     ShapeSpec s;
-    s.shape_id = 4;
+    s.shape_id = 5;
     s.name = "sec";
     Eigen::Vector3d p; p << n, r, h;
-    s.params = p;
-    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
-    return s;
-}
-
-static ShapeSpec make_tc(double beta, double rb, double rt, double ac, double bc, const RadialBoundsOptions& optr)
-{
-    ShapeSpec s;
-    s.shape_id = 5;
-    s.name = "tc";
-    Eigen::Matrix<double,5,1> p; p << beta, rb, rt, ac, bc;
     s.params = p;
     s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
     return s;
@@ -165,7 +165,6 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
     bool have_guess = false;
 
     ProblemData P;
-    P.g1 = Eigen::Matrix4d::Identity();
     P.shape_id1 = s1.shape_id;
     P.shape_id2 = s2.shape_id;
     P.params1 = s1.params;
@@ -215,7 +214,7 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
     for (int i = 0; i < N; ++i) {
         double t = i * dt;
 
-        S.P.g2 = getSystematicPose(t, r_min, r_max);
+        S.P.g = getSystematicPose(t, r_min, r_max);
 
         std::optional<Guess> guess =
             (use_warm_start && have_guess) ? std::optional<Guess>(guess0) : std::nullopt;
@@ -338,6 +337,12 @@ int main() {
     b1 << 1.0, 1.0, 1.0, 1.0,
         5.0/3.0, 5.0/3.0, 5.0/3.0, 5.0/3.0;
 
+    // ----------------- Smooth Truncated Cone--------------
+    const double rb = 1.0;
+    const double rt = 1.5;
+    const double ac = 1.5;
+    const double bc = 1.5;
+
     // ----------------- Superellipsoid--------------
     const double a = 0.5;
     const double b = 1.0;
@@ -347,12 +352,6 @@ int main() {
     const double r = 1.0;
     const double h = 2.0; //half-height
 
-    // ----------------- Truncated Cone--------------
-    const double rb = 1.0;
-    const double rt = 1.5;
-    const double ac = 1.5;
-    const double bc = 1.5;
-        
     const double beta = 20.0;
     int n = 8;
     
@@ -360,25 +359,24 @@ int main() {
     optr.num_starts = 1000;
 
     auto poly = make_poly(A1, b1, beta, optr);
+    auto tc   = make_tc(beta, rb, rt, ac, bc, optr);
     auto se   = make_se(n, a, b, c, optr);
     auto sec  = make_sec(n, r, h, optr);
-    auto tc   = make_tc(beta, rb, rt, ac, bc, optr);
+    
 
-    std::vector<ShapeSpec> shapes = {poly, se, sec, tc};
+    std::vector<ShapeSpec> shapes = {poly, tc, se, sec};
 
-    bool warm_start = true;
+    bool warm_start = false;
 
     for (const auto& s1 : shapes)
         for (const auto& s2 : shapes)
             run_case(s1, s2, warm_start);
     
-    /*
+
     n = 1;
-    se = make_se(n, a, b, c, optr);
-    for (int i = 0; i < 5; ++i){
-        run_case(poly, poly, warm_start);
-        run_case(poly, se, warm_start);
-        run_case(se, se, warm_start);
-    }
-    */
+    auto ellip = make_se(n, a, b, c, optr);
+    run_case(poly, poly, warm_start);
+    run_case(poly, ellip, warm_start);
+    run_case(ellip, ellip, warm_start);
+
 }

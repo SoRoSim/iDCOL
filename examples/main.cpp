@@ -16,17 +16,7 @@
     #define M_PI 3.14159265358979323846
 #endif
 
-// ----- so(3) hat operator -----
-static inline Eigen::Matrix3d skew(const Eigen::Vector3d& v)
-{
-    Eigen::Matrix3d S;
-    S <<     0.0, -v.z(),  v.y(),
-          v.z(),   0.0,  -v.x(),
-         -v.y(),  v.x(),   0.0;
-    return S;
-}
 
-// Column-major packer to match your polytope layout: params = [m; beta; A(row-major); b]
 static Eigen::VectorXd pack_polytope_params(
     const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& A,
     const Eigen::VectorXd& b,
@@ -56,6 +46,57 @@ static Eigen::VectorXd pack_polytope_params(
     return params;
 }
 
+struct ShapeSpec {
+    int shape_id;
+    Eigen::VectorXd params;
+    RadialBounds bounds;
+    std::string name;
+};
+
+static ShapeSpec make_poly(const Eigen::Matrix<double,Eigen::Dynamic,3,Eigen::RowMajor>& A,
+                           const Eigen::VectorXd& b, double beta, const RadialBoundsOptions& optr)
+{
+    ShapeSpec s;
+    s.shape_id = 2;
+    s.name = "poly";
+    s.params = pack_polytope_params(A, b, beta);
+    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
+    return s;
+}
+
+static ShapeSpec make_tc(double beta, double rb, double rt, double ac, double bc, const RadialBoundsOptions& optr)
+{
+    ShapeSpec s;
+    s.shape_id = 3;
+    s.name = "tc";
+    Eigen::Matrix<double,5,1> p; p << beta, rb, rt, ac, bc;
+    s.params = p;
+    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
+    return s;
+}
+
+static ShapeSpec make_se(double n, double a, double b, double c, const RadialBoundsOptions& optr)
+{
+    ShapeSpec s;
+    s.shape_id = 4;
+    s.name = "se";
+    Eigen::Vector4d p; p << n, a, b, c;
+    s.params = p;
+    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
+    return s;
+}
+
+static ShapeSpec make_sec(double n, double r, double h, const RadialBoundsOptions& optr)
+{
+    ShapeSpec s;
+    s.shape_id = 5;
+    s.name = "sec";
+    Eigen::Vector3d p; p << n, r, h;
+    s.params = p;
+    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
+    return s;
+}
+
 int main() {
     using namespace idcol;
 
@@ -75,7 +116,11 @@ int main() {
     b1 << 1.0, 1.0, 1.0, 1.0,
         5.0/3.0, 5.0/3.0, 5.0/3.0, 5.0/3.0;
 
-    //b1 *= 10;
+        // ----------------- Smooth truncated Cone--------------
+    const double rb = 1.0;
+    const double rt = 1.5;
+    const double ac = 1.5;
+    const double bc = 1.5;
 
     // ----------------- Superellipsoid--------------
     const double a = 0.5;
@@ -85,76 +130,46 @@ int main() {
     // ----------------- Superelliptic Cylinder--------------
     const double r = 1.0;
     const double h = 2.0; //half-height
-
-    // ----------------- Truncated Cone--------------
-    const double rb = 1.0;
-    const double rt = 1.5;
-    const double ac = 1.5;
-    const double bc = 1.5;
-
         
     const double beta = 20.0;
     const int n = 8;
-    
-    Eigen::VectorXd params_poly = pack_polytope_params(A1, b1, beta);
-    Eigen::Vector4d params_se;
-    params_se << n, a, b, c;
-    Eigen::Vector3d params_sec;
-    params_sec << n, r, h;
-    Eigen::Matrix<double, 5, 1> params_tc;
-    params_tc << beta, rb, rt, ac, bc;
+
 
     RadialBoundsOptions optr;
     optr.num_starts = 1000;
 
-    RadialBounds bounds_poly = compute_radial_bounds_local(2, params_poly, optr);
-    RadialBounds bounds_se = compute_radial_bounds_local(3, params_se, optr);
-    RadialBounds bounds_sec = compute_radial_bounds_local(4, params_sec, optr);
-    RadialBounds bounds_tc = compute_radial_bounds_local(5, params_tc, optr);
+    auto poly = make_poly(A1, b1, beta, optr);
+    auto se   = make_se(n, a, b, c, optr);
+    auto sec  = make_sec(n, r, h, optr);
+    auto tc   = make_tc(beta, rb, rt, ac, bc, optr);
 
-    //std::cout << "r_1,in  = " << bounds_poly.Rin  << "\n";
-    //std::cout << "r_1,out  = " << bounds_poly.Rout  << "\n";
-    //std::exit(0);
 
-    // ----------------- Poses g1, g2 ------------------------------
-    Eigen::Matrix4d g1 = Eigen::Matrix4d::Identity(); //no lose of generality
-    Eigen::Matrix4d g2 = Eigen::Matrix4d::Identity(); //no lose of generality
+    // ----------------- Relative pose g ------------------------------
+
+    Eigen::Matrix4d g = Eigen::Matrix4d::Identity();
 
     ProblemData P;
-    P.g1 = g1;
-    P.shape_id1 = 2; 
-    P.shape_id2 = 2; 
-    P.params1 = params_poly;
-    P.params2 = params_poly;
 
-    // Face-face case
-    /*Eigen::Vector3d u(2.0, -1.0, 2.0);
-    u.normalize();
-    const double theta = M_PI / 3;
+    P.shape_id1 = poly.shape_id; 
+    P.shape_id2 = poly.shape_id;  
+    P.params1 = poly.params;
+    P.params2 = poly.params;
 
-    // g_here(1:3,1:3) = expm(skew(u*theta))  == exp(theta * skew(u))
-    g2.topLeftCorner<3,3>() = (theta * skew(u)).exp();
-
-    // g_here(1:3,4) = [2;2;2]
-    g2.topRightCorner<3,1>() << 1.0, 0.0, 2.0;
-    P.g2 = g2;
-    */
-
-    P.g2 <<
+    P.g <<
         0.821168,   0.557509,  -0.121927,  -1.82107,
         0.123649,  0.0347633,   0.991717,  -2.76868,
         0.557129,  -0.829443,  -0.0403888, -0.302319,
         0, 0, 0, 1;
 
-    //P.g2.topRightCorner<3,1>() *= 10;
+    //P.g.topRightCorner<3,1>() *= 10;
 
     SolveData S;
     S.P = P;
-    S.bounds1 = bounds_poly;
-    S.bounds2 = bounds_poly;
+    S.bounds1 = poly.bounds;
+    S.bounds2 = poly.bounds;
     
     NewtonOptions opt;
-    opt.L = 1; //scale factor for x. change with: bounds_poly.Rout + bounds_poly.Rout?
+    opt.L = 1; //scale factor
     opt.max_iters = 30;
     opt.tol = 1e-10;
     opt.verbose = true;
@@ -163,10 +178,6 @@ int main() {
     double alpha;
     double lambda1;
     double lambda2;
-
-    //idcol::Guess guess;
-
-
 
     // Build surrogate schedule (default is {1,3}, but you can set explicitly)    
     idcol::SurrogateOptions sopt;
@@ -190,7 +201,7 @@ int main() {
     double phi_star;
     Eigen::Vector4d grad_star;
 
-    shape_eval_global_xa_phi_grad(P.g1, x, alpha, P.shape_id1, P.params1, phi_star, grad_star);
+    shape_eval_global_xa_phi_grad(Eigen::Matrix4d::Identity(), x, alpha, P.shape_id1, P.params1, phi_star, grad_star);
 
     double t_total_us =
     std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(t1 - t0).count();

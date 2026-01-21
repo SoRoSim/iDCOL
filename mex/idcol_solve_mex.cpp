@@ -93,8 +93,7 @@ static idcol::ProblemData parse_problem(const mxArray* Pmx) {
     if (!mxIsStruct(Pmx)) mexErrMsgIdAndTxt("idcol:badArg", "S.P must be a struct.");
 
     idcol::ProblemData P;
-    P.g1 = get_T44_required(Pmx, "g1");
-    P.g2 = get_T44_required(Pmx, "g2");
+    P.g = get_T44_required(Pmx, "g");
 
     P.shape_id1 = get_int_scalar(Pmx, "shape_id1", 0, /*required=*/true);
     P.shape_id2 = get_int_scalar(Pmx, "shape_id2", 0, /*required=*/true);

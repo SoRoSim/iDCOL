@@ -6,8 +6,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ---------- Core sources ----------
 set(IDCOL_CORE
-    core/idcol_kkt.cpp
+    core/idcol_solve.cpp
     core/idcol_newton.cpp
+    core/idcol_kkt.cpp
     core/shape_core.cpp
     core/radial_bounds.cpp
 )
@@ -21,16 +22,6 @@ add_executable(idcol_example
 add_executable(idcol_ergodic
     examples/ergodic.cpp
     ${IDCOL_CORE}
-)
-
-add_executable(idcol_bench
-    examples/bench.cpp
-    ${IDCOL_CORE}
-)
-
-target_include_directories(idcol_bench PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/eigen-3.4.0
 )
 
 # ---------- Include paths ----------

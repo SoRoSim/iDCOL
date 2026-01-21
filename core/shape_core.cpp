@@ -4,7 +4,6 @@
 #include <stdexcept>
 #include <limits>
 #include <algorithm>
-#include <iostream>
 
 using Eigen::Vector3d;
 using Eigen::Vector4d;
@@ -74,32 +73,34 @@ void shape_eval_local_phi_grad(
     }
 
     // -----------------------------------------
-    // shape_id = 2 : Convex polytope, smooth-max
+    // shape_id = 2 : Smooth polytope, smooth-max
     // -----------------------------------------
    else if (shape_id == 2)
     {
-        if (nParams < 3) fail("Polytope params too short.");
+        if (nParams < 3) fail("Smooth polytope params too short.");
 
         const double beta   = p[0];
         const int    m      = static_cast<int>(p[1]);
         const double Lscale = p[2];
 
-        if (m <= 0)          fail("Polytope: m must be positive.");
-        if (!(beta  > 0.0))  fail("Polytope: beta must be > 0.");
-        if (!(Lscale > 0.0)) fail("Polytope: Lscale must be > 0.");
+        if (m <= 0)          fail("Smooth polytope: m must be positive.");
+        if (!(beta  > 0.0))  fail("Smooth polytope: beta must be > 0.");
+        if (!(Lscale > 0.0)) fail("Smooth polytope: Lscale must be > 0.");
 
         const std::size_t expected = 3 + 4 * static_cast<std::size_t>(m);
-        if (nParams != expected) fail("Polytope params size must be 3 + 4*m.");
+        if (nParams != expected) fail("Smooth polytope params size must be 3 + 4*m.");
 
         const double* A_data = p + 3;
         const double* b_data = p + 3 + 3*m;
 
-        Eigen::Map<const Eigen::Matrix<double,Eigen::Dynamic,3>> A(A_data, m, 3);
+        // A is stored column-major in params by your packer. Make it explicit.
+        using Matm3Col = Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::ColMajor>;
+        Eigen::Map<const Matm3Col> A(A_data, m, 3);
         Eigen::Map<const Eigen::VectorXd> b(b_data, m);
 
         const double invL = 1.0 / Lscale;
 
-        // Option A: z_hat = (a_i^T y - b_i)/Lscale
+        // z_hat = (a_i^T y - b_i)/Lscale
         double zmax = -std::numeric_limits<double>::infinity();
         for (int i = 0; i < m; ++i) {
             const double zi_hat = (A.row(i).dot(y) - b(i)) * invL;
@@ -129,11 +130,84 @@ void shape_eval_local_phi_grad(
         return;
     }
 
+    // ---------------------------------
+    // shape_id = 3 : Smooth truncated cone
+    // ---------------------------------
+   else if (shape_id == 3)
+    {
+        if (nParams < 5)
+            fail("Smooth truncated cone needs params = [beta; Rb; Rt; a; b].");
+        
+        double beta = p[0];
+        double Rb   = p[1];
+        double Rt   = p[2];
+        double a    = p[3];
+        double b    = p[4];
+
+        if (Rb <= 0.0 || Rt <= 0.0 || a <= 0.0 || b <= 0.0 || beta <= 0.0)
+            fail("Smooth truncated cone params must all be > 0.");
+
+        double x1 = y(0);
+        double x2 = y(1);
+        double x3 = y(2);
+
+        double r2 = x2 * x2 + x3 * x3;
+        double h  = a + b;
+
+        // linear interpolation of radius along x1
+        double t  = (x1 + a) / h;        // in [0,1] ideally
+        double Rx = Rb + (Rt - Rb) * t;
+        double Rx2 = Rx * Rx;
+        double Rx3 = Rx2 * Rx;
+
+        double phi_side;
+        Vector3d grad_side = Vector3d::Zero();
+
+        if (Rx > 0.0 && r2 > 0.0) {
+            // side surface implicit: r^2 / Rx^2 - 1 = 0
+            phi_side = r2 / Rx2 - 1.0;
+
+            double inv_Rx2 = 1.0 / Rx2;
+            grad_side(1) = 2.0 * x2 * inv_Rx2;
+            grad_side(2) = 2.0 * x3 * inv_Rx2;
+
+            double dRx_dx1 = (Rt - Rb) / h;
+            grad_side(0) = -2.0 * r2 / Rx3 * dRx_dx1;
+        } else {
+            // safely "inside" or degenerate case: treat side as inactive
+            phi_side = -1.0;
+        }
+
+        double phi_bot = -x1 / a - 1;  // bottom plane
+        double phi_top =  x1 / b - 1;  // top plane
+
+        Vector3d grad_bot(-1.0 / a, 0.0, 0.0);
+        Vector3d grad_top( 1.0 / b, 0.0, 0.0);
+
+        // smooth-max of [phi_side, phi_bot, phi_top]
+        double mphi = std::max(phi_side, std::max(phi_bot, phi_top));
+
+        double e_side = std::exp(beta * (phi_side - mphi));
+        double e_bot  = std::exp(beta * (phi_bot  - mphi));
+        double e_top  = std::exp(beta * (phi_top  - mphi));
+
+        double sum_e = e_side + e_bot + e_top;
+
+        phi = mphi + (1.0 / beta) * std::log(sum_e);
+
+        double inv_sum_e = 1.0 / sum_e;
+        double w_side = e_side * inv_sum_e;
+        double w_bot  = e_bot  * inv_sum_e;
+        double w_top  = e_top  * inv_sum_e;
+
+        grad_phi = w_side * grad_side + w_bot * grad_bot + w_top * grad_top;
+        return;
+    }
 
     // ---------------------------------
-    // shape_id = 3 : Superellipsoid
+    // shape_id = 4 : Superellipsoid
     // ---------------------------------
-    else if (shape_id == 3) {
+    else if (shape_id == 4) {
         if (nParams < 4) {
             fail("Superellipsoid needs params = [n; a; b; c].");
         }
@@ -198,11 +272,10 @@ void shape_eval_local_phi_grad(
         return;
     }
 
-
     // ---------------------------------
-    // shape_id = 4 : Superelliptic cylinder
+    // shape_id = 5 : Superelliptic cylinder
     // ---------------------------------
-    else if (shape_id == 4) {
+    else if (shape_id == 5) {
         if (nParams < 3) {
             fail("Superelliptic cylinder needs params = [n; R; h].");
         }
@@ -289,80 +362,6 @@ void shape_eval_local_phi_grad(
         return;
     }
 
-    // ---------------------------------
-    // shape_id = 5 : Truncated cone
-    // ---------------------------------
-   else if (shape_id == 5)
-    {
-        if (nParams < 5)
-            fail("Truncated cone needs params = [beta; Rb; Rt; a; b].");
-        
-        double beta = p[0];
-        double Rb   = p[1];
-        double Rt   = p[2];
-        double a    = p[3];
-        double b    = p[4];
-
-        if (Rb <= 0.0 || Rt <= 0.0 || a <= 0.0 || b <= 0.0 || beta <= 0.0)
-            fail("Truncated cone params must all be > 0.");
-
-        double x1 = y(0);
-        double x2 = y(1);
-        double x3 = y(2);
-
-        double r2 = x2 * x2 + x3 * x3;
-        double h  = a + b;
-
-        // linear interpolation of radius along x1
-        double t  = (x1 + a) / h;        // in [0,1] ideally
-        double Rx = Rb + (Rt - Rb) * t;
-        double Rx2 = Rx * Rx;
-        double Rx3 = Rx2 * Rx;
-
-        double phi_side;
-        Vector3d grad_side = Vector3d::Zero();
-
-        if (Rx > 0.0 && r2 > 0.0) {
-            // side surface implicit: r^2 / Rx^2 - 1 = 0
-            phi_side = r2 / Rx2 - 1.0;
-
-            double inv_Rx2 = 1.0 / Rx2;
-            grad_side(1) = 2.0 * x2 * inv_Rx2;
-            grad_side(2) = 2.0 * x3 * inv_Rx2;
-
-            double dRx_dx1 = (Rt - Rb) / h;
-            grad_side(0) = -2.0 * r2 / Rx3 * dRx_dx1;
-        } else {
-            // safely "inside" or degenerate case: treat side as inactive
-            phi_side = -1.0;
-        }
-
-        double phi_bot = -x1 / a - 1;  // bottom plane
-        double phi_top =  x1 / b - 1;  // top plane
-
-        Vector3d grad_bot(-1.0 / a, 0.0, 0.0);
-        Vector3d grad_top( 1.0 / b, 0.0, 0.0);
-
-        // smooth-max of [phi_side, phi_bot, phi_top]
-        double mphi = std::max(phi_side, std::max(phi_bot, phi_top));
-
-        double e_side = std::exp(beta * (phi_side - mphi));
-        double e_bot  = std::exp(beta * (phi_bot  - mphi));
-        double e_top  = std::exp(beta * (phi_top  - mphi));
-
-        double sum_e = e_side + e_bot + e_top;
-
-        phi = mphi + (1.0 / beta) * std::log(sum_e);
-
-        double inv_sum_e = 1.0 / sum_e;
-        double w_side = e_side * inv_sum_e;
-        double w_bot  = e_bot  * inv_sum_e;
-        double w_top  = e_top  * inv_sum_e;
-
-        grad_phi = w_side * grad_side + w_bot * grad_bot + w_top * grad_top;
-        return;
-    }
-
     else
         fail("Unknown shape_id (valid: 1–5).");
 }
@@ -444,21 +443,21 @@ void shape_eval_local(
     }
 
     // -----------------------------------------
-    // shape_id = 2 : Convex polytope, smooth-max
+    // shape_id = 2 : Smooth polytope, smooth-max
     // -----------------------------------------
     else if (shape_id == 2) {
-        if (nParams < 3) fail("Polytope params too short.");
+        if (nParams < 3) fail("Smooth polytope params too short.");
 
         const double beta   = p[0];
         const int    m      = static_cast<int>(p[1]);
         const double Lscale = p[2];
 
-        if (m <= 0)          fail("Polytope: m must be positive.");
-        if (!(beta  > 0.0))  fail("Polytope: beta must be > 0.");
-        if (!(Lscale > 0.0)) fail("Polytope: Lscale must be > 0.");
+        if (m <= 0)          fail("Smooth polytope: m must be positive.");
+        if (!(beta  > 0.0))  fail("Smooth polytope: beta must be > 0.");
+        if (!(Lscale > 0.0)) fail("Smooth polytope: Lscale must be > 0.");
 
         const std::size_t expected = 3 + 4 * static_cast<std::size_t>(m);
-        if (nParams != expected) fail("Polytope params size must be 3 + 4*m.");
+        if (nParams != expected) fail("Smooth polytope params size must be 3 + 4*m.");
 
         const double* A_data = p + 3;
         const double* b_data = p + 3 + 3*m;
@@ -520,9 +519,121 @@ void shape_eval_local(
     }
 
     // ---------------------------------
-    // shape_id = 3 : Superellipsoid
+    // shape_id = 3 : Smooth truncated cone
     // ---------------------------------
-    else if (shape_id == 3) {
+   else if (shape_id == 3) {
+        if (nParams < 5) {
+            fail("Smooth truncated cone needs params = [beta; Rb; Rt; a; b].");
+        }
+        
+        double beta = p[0];
+        double Rb   = p[1];
+        double Rt   = p[2];
+        double a    = p[3];
+        double b    = p[4];
+
+        if (Rb <= 0.0 || Rt <= 0.0 || a <= 0.0 || b <= 0.0 || beta <= 0.0) {
+            fail("Smooth truncated cone: Rb, Rt, a, b, beta all must be > 0.");
+        }
+
+        double x1 = y(0);
+        double x2 = y(1);
+        double x3 = y(2);
+
+        double r2 = x2 * x2 + x3 * x3;
+        double h  = a + b;
+
+        double t   = (x1 + a) / h;
+        double Rx  = Rb + (Rt - Rb) * t;
+        double Rx2 = Rx * Rx;
+        double Rx3 = Rx2 * Rx;
+
+        double phi_side = 0.0;
+        Vector3d grad_side = Vector3d::Zero();
+        Matrix3d hess_side = Matrix3d::Zero();
+
+        if (Rx > 0.0 && r2 > 0.0) {
+            double term_side = r2 / Rx2;   // r^2 / Rx^2
+            phi_side = term_side - 1.0;
+
+            double inv_Rx2 = 1.0 / Rx2;
+
+            // grad wrt x2, x3
+            grad_side(1) = 2.0 * x2 * inv_Rx2;
+            grad_side(2) = 2.0 * x3 * inv_Rx2;
+
+            // Rx depends linearly on x1
+            double dRx_dx1 = (Rt - Rb) / h;
+
+            // grad wrt x1
+            grad_side(0) = -2.0 * r2 / Rx3 * dRx_dx1;
+
+            // Hessian
+            hess_side.setZero();
+            double dRx_dx1_sq = dRx_dx1 * dRx_dx1;
+            double inv_Rx4 = 1.0 / (Rx2 * Rx2);
+
+            hess_side(0,0) = 6.0 * r2 * inv_Rx4 * dRx_dx1_sq;
+            hess_side(1,1) = 2.0 * inv_Rx2;
+            hess_side(2,2) = 2.0 * inv_Rx2;
+
+            double H12 = -4.0 * x2 * dRx_dx1 / Rx3;
+            double H13 = -4.0 * x3 * dRx_dx1 / Rx3;
+
+            hess_side(0,1) = H12;
+            hess_side(1,0) = H12;
+            hess_side(0,2) = H13;
+            hess_side(2,0) = H13;
+        } else {
+            phi_side = -1.0;
+            grad_side.setZero();
+            hess_side.setZero();
+        }
+
+        double phi_bot = -x1 / a - 1;
+        double phi_top =  x1 / b - 1;
+
+        Vector3d grad_bot(-1.0 / a, 0.0, 0.0);
+        Vector3d grad_top( 1.0 / b, 0.0, 0.0);
+
+        // smooth-max over [phi_side, phi_bot, phi_top]
+        double mphi = std::max(phi_side, std::max(phi_top, phi_bot));
+
+        double e_side = std::exp(beta * (phi_side - mphi));
+        double e_bot  = std::exp(beta * (phi_bot  - mphi));
+        double e_top  = std::exp(beta * (phi_top  - mphi));
+
+        double sum_e = e_side + e_bot + e_top;
+
+        phi = mphi + (1.0 / beta) * std::log(sum_e);
+
+        double inv_sum_e = 1.0 / sum_e;
+        double w_side = e_side * inv_sum_e;
+        double w_bot  = e_bot  * inv_sum_e;
+        double w_top  = e_top  * inv_sum_e;
+
+        // gradient of smooth-max
+        grad_phi = w_side * grad_side + w_bot * grad_bot + w_top * grad_top;
+
+        // Hessian of smooth-max:
+        // H = sum w_i H_i + beta * ( sum w_i g_i g_i^T - (sum w_i g_i)(sum w_i g_i)^T )
+        Matrix3d H_sum = Matrix3d::Zero();
+        H_sum += w_side * hess_side;  // only side has nonzero Hessian
+
+        Matrix3d G2 = Matrix3d::Zero();
+        G2 += w_side * (grad_side * grad_side.transpose());
+        G2 += w_bot  * (grad_bot  * grad_bot.transpose());
+        G2 += w_top  * (grad_top  * grad_top.transpose());
+
+        hess_phi = H_sum + beta * (G2 - grad_phi * grad_phi.transpose());
+
+        return;
+    }
+
+    // ---------------------------------
+    // shape_id = 4 : Superellipsoid
+    // ---------------------------------
+    else if (shape_id == 4) {
         if (nParams < 4) {
             fail("Superellipsoid needs params = [n; a; b; c].");
         }
@@ -607,9 +718,9 @@ void shape_eval_local(
     }
 
     // ---------------------------------
-    // shape_id = 4 : Superelliptic cylinder
+    // shape_id = 5 : Superelliptic cylinder
     // ---------------------------------
-   else if (shape_id == 4) {
+   else if (shape_id == 5) {
         if (nParams < 3) {
             fail("Superelliptic cylinder needs params = [n; R; h].");
         }
@@ -715,118 +826,6 @@ void shape_eval_local(
         // rank-1 update from q''(S) * gradS*gradS^T
         Eigen::Vector3d gS(dSdx1, dSdx2, dSdx3);
         hess_phi.noalias() += qsecond * (gS * gS.transpose());
-
-        return;
-    }
-
-    // ---------------------------------
-    // shape_id = 5 : Truncated cone
-    // ---------------------------------
-   else if (shape_id == 5) {
-        if (nParams < 5) {
-            fail("Truncated cone needs params = [beta; Rb; Rt; a; b].");
-        }
-        
-        double beta = p[0];
-        double Rb   = p[1];
-        double Rt   = p[2];
-        double a    = p[3];
-        double b    = p[4];
-
-        if (Rb <= 0.0 || Rt <= 0.0 || a <= 0.0 || b <= 0.0 || beta <= 0.0) {
-            fail("Truncated cone: Rb, Rt, a, b, beta all must be > 0.");
-        }
-
-        double x1 = y(0);
-        double x2 = y(1);
-        double x3 = y(2);
-
-        double r2 = x2 * x2 + x3 * x3;
-        double h  = a + b;
-
-        double t   = (x1 + a) / h;
-        double Rx  = Rb + (Rt - Rb) * t;
-        double Rx2 = Rx * Rx;
-        double Rx3 = Rx2 * Rx;
-
-        double phi_side = 0.0;
-        Vector3d grad_side = Vector3d::Zero();
-        Matrix3d hess_side = Matrix3d::Zero();
-
-        if (Rx > 0.0 && r2 > 0.0) {
-            double term_side = r2 / Rx2;   // r^2 / Rx^2
-            phi_side = term_side - 1.0;
-
-            double inv_Rx2 = 1.0 / Rx2;
-
-            // grad wrt x2, x3
-            grad_side(1) = 2.0 * x2 * inv_Rx2;
-            grad_side(2) = 2.0 * x3 * inv_Rx2;
-
-            // Rx depends linearly on x1
-            double dRx_dx1 = (Rt - Rb) / h;
-
-            // grad wrt x1
-            grad_side(0) = -2.0 * r2 / Rx3 * dRx_dx1;
-
-            // Hessian
-            hess_side.setZero();
-            double dRx_dx1_sq = dRx_dx1 * dRx_dx1;
-            double inv_Rx4 = 1.0 / (Rx2 * Rx2);
-
-            hess_side(0,0) = 6.0 * r2 * inv_Rx4 * dRx_dx1_sq;
-            hess_side(1,1) = 2.0 * inv_Rx2;
-            hess_side(2,2) = 2.0 * inv_Rx2;
-
-            double H12 = -4.0 * x2 * dRx_dx1 / Rx3;
-            double H13 = -4.0 * x3 * dRx_dx1 / Rx3;
-
-            hess_side(0,1) = H12;
-            hess_side(1,0) = H12;
-            hess_side(0,2) = H13;
-            hess_side(2,0) = H13;
-        } else {
-            phi_side = -1.0;
-            grad_side.setZero();
-            hess_side.setZero();
-        }
-
-        double phi_bot = -x1 / a - 1;
-        double phi_top =  x1 / b - 1;
-
-        Vector3d grad_bot(-1.0 / a, 0.0, 0.0);
-        Vector3d grad_top( 1.0 / b, 0.0, 0.0);
-
-        // smooth-max over [phi_side, phi_bot, phi_top]
-        double mphi = std::max(phi_side, std::max(phi_top, phi_bot));
-
-        double e_side = std::exp(beta * (phi_side - mphi));
-        double e_bot  = std::exp(beta * (phi_bot  - mphi));
-        double e_top  = std::exp(beta * (phi_top  - mphi));
-
-        double sum_e = e_side + e_bot + e_top;
-
-        phi = mphi + (1.0 / beta) * std::log(sum_e);
-
-        double inv_sum_e = 1.0 / sum_e;
-        double w_side = e_side * inv_sum_e;
-        double w_bot  = e_bot  * inv_sum_e;
-        double w_top  = e_top  * inv_sum_e;
-
-        // gradient of smooth-max
-        grad_phi = w_side * grad_side + w_bot * grad_bot + w_top * grad_top;
-
-        // Hessian of smooth-max:
-        // H = sum w_i H_i + beta * ( sum w_i g_i g_i^T - (sum w_i g_i)(sum w_i g_i)^T )
-        Matrix3d H_sum = Matrix3d::Zero();
-        H_sum += w_side * hess_side;  // only side has nonzero Hessian
-
-        Matrix3d G2 = Matrix3d::Zero();
-        G2 += w_side * (grad_side * grad_side.transpose());
-        G2 += w_bot  * (grad_bot  * grad_bot.transpose());
-        G2 += w_top  * (grad_top  * grad_top.transpose());
-
-        hess_phi = H_sum + beta * (G2 - grad_phi * grad_phi.transpose());
 
         return;
     }

@@ -16,8 +16,7 @@ using Matrix6d = Eigen::Matrix<double, 6, 6>;
 using Vector6d = Eigen::Matrix<double, 6, 1>;
 
 struct ProblemData {
-    Matrix4d g1;
-    Matrix4d g2;
+    Matrix4d g; // relative pose g = g1^{-1} g2
     int shape_id1 = 0;
     int shape_id2 = 0;
     VectorXd params1;

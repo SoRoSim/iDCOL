@@ -108,8 +108,7 @@ static idcol::ProblemData parse_problem(const mxArray* Pmx) {
     require(Pmx && mxIsStruct(Pmx), "kkt_mex:badArg", "P must be a struct.");
 
     idcol::ProblemData P;
-    P.g1 = get_T44_required_field(Pmx, "g1");
-    P.g2 = get_T44_required_field(Pmx, "g2");
+    P.g = get_T44_required_field(Pmx, "g");
     P.shape_id1 = get_int_required_field(Pmx, "shape_id1");
     P.shape_id2 = get_int_required_field(Pmx, "shape_id2");
     P.params1 = get_vecN_required_field(Pmx, "params1");
