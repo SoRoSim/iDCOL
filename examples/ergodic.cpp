@@ -12,21 +12,21 @@
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <optional>
+
 #include "core/idcol_newton.hpp"
 #include "core/radial_bounds.hpp"
 #include "core/shape_core.hpp"
 #include "core/idcol_solve.hpp"
 
-
-// Fix for M_PI undefined
 #ifndef M_PI
-    #define M_PI 3.14159265358979323846
+#define M_PI 3.14159265358979323846
 #endif
 
-// Helper to construct the pose g(t)
+// ------------------------------
+// Pose generator (unchanged)
+// ------------------------------
 Eigen::Matrix4d getSystematicPose(double t, double r_min, double r_max) {
-    
-    // 1. Frequencies (Irrational ratios for ergodicity)
     const double f1 = std::sqrt(2.0);
     const double f2 = std::sqrt(3.0);
     const double f3 = std::sqrt(5.0);
@@ -37,20 +37,13 @@ Eigen::Matrix4d getSystematicPose(double t, double r_min, double r_max) {
 
     const double TWO_PI = 2.0 * M_PI;
 
-    // ---------- Translation (Spherical Sweep) ----------
-    // Radial distance oscillating between r_min and r_max
-    //double r_val = r_min + 0.5 * (r_max - r_min) * (1.0 + std::sin(TWO_PI * f1 * t));
-    // smooth parameter in [0,1]
+    // Translation
     double u = 0.5 * (1.0 + std::sin(TWO_PI * f1 * t));
-
-    // approximate uniform-in-volume radial mapping
     double r_val = std::cbrt(
         r_min*r_min*r_min +
         (r_max*r_max*r_max - r_min*r_min*r_min) * u
     );
 
-    
-    // Latitude (theta) and Longitude (phi)
     double theta = (M_PI / 2.0) * std::sin(TWO_PI * f2 * t);
     double phi   = TWO_PI * f3 * t;
 
@@ -59,24 +52,24 @@ Eigen::Matrix4d getSystematicPose(double t, double r_min, double r_max) {
            r_val * std::cos(theta) * std::sin(phi),
            r_val * std::sin(theta);
 
-    // ---------- Orientation (Uniform Quaternion Sweep) ----------
-    // Use Sine/Cosine mix to ensure the vector never hits [0,0,0,0]
+    // Orientation
     double v1 = std::sin(TWO_PI * f4 * t);
     double v2 = std::cos(TWO_PI * f5 * t);
     double v3 = std::sin(TWO_PI * f6 * t);
     double v4 = std::cos(TWO_PI * f7 * t);
 
     Eigen::Quaterniond q(v1, v2, v3, v4); // (w, x, y, z)
-    q.normalize(); // Ensures it sits on the unit hypersphere
+    q.normalize();
 
-    // ---------- Assemble Pose g2 ----------
     Eigen::Matrix4d g2 = Eigen::Matrix4d::Identity();
     g2.topLeftCorner<3,3>() = q.toRotationMatrix();
     g2.topRightCorner<3,1>() = pos;
-
     return g2;
 }
 
+// ------------------------------
+// Packing helpers (unchanged)
+// ------------------------------
 static Eigen::VectorXd pack_polytope_params(
     const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& A,
     const Eigen::VectorXd& b,
@@ -87,21 +80,17 @@ static Eigen::VectorXd pack_polytope_params(
     if (b.size() != m) throw std::runtime_error("b must be length m");
 
     Eigen::VectorXd params(3 + 3*m + m);
-    
+
     params(0) = beta;
     params(1) = static_cast<double>(m);
-    params(2) = 1; //A length scale. Replace with max(rout1, rout2)
+    params(2) = 1.0; // Lscale
 
-    // A in column-major (MATLAB reshape(A,[],1) order):
-    // [A(0,0) A(1,0) ... A(m-1,0)  A(0,1) ... A(m-1,1)  A(0,2) ... A(m-1,2)]
+    // A packed col-major
     double* outA = params.data() + 3;
-    for (int j = 0; j < 3; ++j) {
-        for (int i = 0; i < m; ++i) {
+    for (int j = 0; j < 3; ++j)
+        for (int i = 0; i < m; ++i)
             outA[j*m + i] = A(i,j);
-        }
-    }
 
-    // b
     params.segment(3 + 3*m, m) = b;
     return params;
 }
@@ -157,9 +146,43 @@ static ShapeSpec make_sec(double n, double r, double h, const RadialBoundsOption
     return s;
 }
 
-static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_start)
+// ------------------------------
+// Benchmark options: Pass A / Pass B
+// ------------------------------
+struct BenchOptions {
+    bool use_warm_start = false;
+
+    // Pass A (timing): set both false
+    bool write_csv = false;
+
+    // Pass B (diagnostics): enable and maybe subsample
+    bool compute_svd = false;
+    int  svd_stride  = 1000;  // compute SVD once every K successful solves (>=1)
+
+    // Control the sweep
+    double t_max = 100.0;
+    double dt    = 1e-4;
+
+    // For reporting: if true, compute median from sorted durations
+    // (always true here; it’s cheap)
+    bool report_median = true;
+};
+
+struct BenchResult {
+    double avg_us = 0.0;
+    double median_us = 0.0;
+    double stddev_us = 0.0;
+    double avg_iters = 0.0;
+    double min_sigma_ratio = 0.0;
+    double success_pct = 0.0;
+    std::size_t succ = 0;
+    std::size_t failed = 0;
+};
+
+static BenchResult run_case(const ShapeSpec& s1, const ShapeSpec& s2, const BenchOptions& bo)
 {
     using namespace idcol;
+    using Clock = std::chrono::steady_clock;
 
     Guess guess0;
     bool have_guess = false;
@@ -176,166 +199,172 @@ static void run_case(const ShapeSpec& s1, const ShapeSpec& s2, bool use_warm_sta
     S.bounds2 = s2.bounds;
 
     NewtonOptions opt;
-    opt.L = 1; 
+    opt.L = 1;
     opt.max_iters = 30;
     opt.tol = 1e-10;
     opt.verbose = false;
 
     SurrogateOptions sopt;
     sopt.fS_values = {1, 3, 5, 7, 9};
-    sopt.enable_scaling = false; //make true if needed
+    sopt.enable_scaling = false;
 
-    double r_min = 0.1 * std::min(s1.bounds.Rin,  s2.bounds.Rin);
-    double r_max = 2.0 * std::max(s1.bounds.Rout, s2.bounds.Rout);
+    const double r_min = 0.1 * std::min(s1.bounds.Rin,  s2.bounds.Rin);
+    const double r_max = 2.0 * std::max(s1.bounds.Rout, s2.bounds.Rout);
 
-    const double t_max = 100.0;
-    const double dt = 1e-4;
-    const int N = static_cast<int>(std::round(t_max / dt)) + 1;
+    const int N = static_cast<int>(std::round(bo.t_max / bo.dt)) + 1;
 
-    int failed = 0;
     std::vector<double> durations_us;
     durations_us.reserve(N);
     std::vector<int> iters_used;
     iters_used.reserve(N);
-    std::vector<double> j_sigmas;
-    j_sigmas.reserve(N);
     std::vector<double> j_ratios;
-    j_ratios.reserve(N);
+    if (bo.compute_svd) j_ratios.reserve(N / std::max(1, bo.svd_stride));
 
-    // CSV output for this case
     std::ofstream csv;
-    std::string csv_name = s1.name + std::string("-") + s2.name + std::string(".csv");
-    csv.open(csv_name);
-    if (!csv) std::cerr << "Warning: could not open CSV file '" << csv_name << "' for writing\n";
     bool csv_header_written = false;
+    if (bo.write_csv) {
+        const std::string csv_name = s1.name + std::string("-") + s2.name +
+                                     (bo.use_warm_start ? "_warm" : "_cold") + ".csv";
+        csv.open(csv_name);
+        if (!csv) std::cerr << "Warning: could not open CSV file '" << csv_name << "' for writing\n";
+    }
 
-    using Clock = std::chrono::steady_clock;
+    std::size_t failed = 0;
+
+    int svd_counter = 0;
 
     for (int i = 0; i < N; ++i) {
-        double t = i * dt;
+        const double t = i * bo.dt;
 
+        // You said (1) is OK: this is the correct field used by the solver in your project.
         S.P.g = getSystematicPose(t, r_min, r_max);
 
-        std::optional<Guess> guess =
-            (use_warm_start && have_guess) ? std::optional<Guess>(guess0) : std::nullopt;
+        const std::optional<Guess> guess =
+            (bo.use_warm_start && have_guess) ? std::optional<Guess>(guess0) : std::nullopt;
 
-        auto solve_t0 = Clock::now();
+        const auto solve_t0 = Clock::now();
         SolveResult out = idcol_solve(S, guess, opt, sopt);
-        auto solve_t1 = Clock::now();
+        const auto solve_t1 = Clock::now();
 
-        double dur_us = std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(solve_t1 - solve_t0).count();
+        const double dur_us =
+            std::chrono::duration_cast<std::chrono::duration<double, std::micro>>(solve_t1 - solve_t0).count();
 
-        //x0 = out.newton.x; alpha0 = out.newton.alpha; lambda10 = out.newton.lambda1; lambda20 = out.newton.lambda2;
-
-        if (!out.newton.converged){
-            /*
-            std::cout << "\nFAIL case " << s1.name << "-" << s2.name
-                    << " i=" << i << " t=" << t << "\n";
-
-            std::cout << "g2=\n" << S.P.g2 << "\n";
-            std::cout << "x=" << out.newton.x.transpose() << "\n";
-            std::cout << "alpha=" << out.newton.alpha
-                    << " lambda1=" << out.newton.lambda1
-                    << " lambda2=" << out.newton.lambda2 << "\n";
-            std::cout << "iters=" << out.newton.iters_used
-                    << " ||F||=" << out.newton.final_F_norm
-                    << " msg=" << out.newton.message << "\n";
-            std::exit(0);
-            */
+        if (!out.newton.converged) {
             failed++;
+            continue;
         }
-        else {
-            // Write CSV header on first successful solve and then append the row
-            if (csv.is_open()) {
-                if (!csv_header_written) {
-                    int xlen = static_cast<int>(out.newton.x.size());
-                    csv << "t";
-                    for (int k = 0; k < xlen; ++k) csv << ",x" << k;
-                    csv << ",alpha\n";
-                    csv_header_written = true;
-                }
 
-                csv << std::setprecision(15) << t;
-                for (int k = 0; k < out.newton.x.size(); ++k) csv << "," << std::setprecision(15) << out.newton.x(k);
-                csv << "," << std::setprecision(15) << out.newton.alpha << "\n";
+        // Pass A timing collection: only store on success
+        durations_us.push_back(dur_us);
+        iters_used.push_back(out.newton.iters_used);
+
+        // Optional CSV (kept out of timed region)
+        if (bo.write_csv && csv.is_open()) {
+            if (!csv_header_written) {
+                const int xlen = static_cast<int>(out.newton.x.size());
+                csv << "t";
+                for (int k = 0; k < xlen; ++k) csv << ",x" << k;
+                csv << ",alpha\n";
+                csv_header_written = true;
             }
+            csv << std::setprecision(15) << t;
+            for (int k = 0; k < out.newton.x.size(); ++k)
+                csv << "," << std::setprecision(15) << out.newton.x(k);
+            csv << "," << std::setprecision(15) << out.newton.alpha << "\n";
+        }
 
-            durations_us.push_back(dur_us);
-            iters_used.push_back(out.newton.iters_used);
-            {
+        // Optional diagnostics (SVD) with subsampling to avoid distorting runtime environment
+        if (bo.compute_svd) {
+            svd_counter++;
+            if (svd_counter >= std::max(1, bo.svd_stride)) {
+                svd_counter = 0;
+
+                // If J is always 6x6 in your solver, consider changing its type there.
                 Eigen::MatrixXd Jmat = out.newton.J;
                 Eigen::JacobiSVD<Eigen::MatrixXd> svd(Jmat, Eigen::ComputeThinU | Eigen::ComputeThinV);
-                Eigen::VectorXd svals = svd.singularValues();
-                double sigma_min = svals.minCoeff();
-                double sigma_max = svals.maxCoeff();
-                j_sigmas.push_back(sigma_min);
-                double ratio = (sigma_max > 0.0) ? (sigma_min / sigma_max) : 0.0;
+                const Eigen::VectorXd svals = svd.singularValues();
+                const double sigma_min = svals.minCoeff();
+                const double sigma_max = svals.maxCoeff();
+                const double ratio = (sigma_max > 0.0) ? (sigma_min / sigma_max) : 0.0;
                 j_ratios.push_back(ratio);
             }
-            guess0.x       = out.newton.x;
-            guess0.alpha   = out.newton.alpha;
-            guess0.lambda1 = out.newton.lambda1;
-            guess0.lambda2 = out.newton.lambda2;
-            have_guess = true;
         }
 
+        // Warm start update (kept out of timing)
+        guess0.x       = out.newton.x;
+        guess0.alpha   = out.newton.alpha;
+        guess0.lambda1 = out.newton.lambda1;
+        guess0.lambda2 = out.newton.lambda2;
+        have_guess = true;
     }
 
-    if (csv.is_open()) csv.close();
+    if (bo.write_csv && csv.is_open()) csv.close();
 
-    double success = 100.0 * double(durations_us.size()) / double(N);
+    BenchResult R;
+    R.succ = durations_us.size();
+    R.failed = failed;
+    R.success_pct = 100.0 * double(R.succ) / double(N);
 
-    double avg_us = 0.0, median_us = 0.0, stddev_us = 0.0;
-    double avg_iters = 0.0;
     if (!durations_us.empty()) {
-        double sum = std::accumulate(durations_us.begin(), durations_us.end(), 0.0);
-        avg_us = sum / double(durations_us.size());
+        const double sum = std::accumulate(durations_us.begin(), durations_us.end(), 0.0);
+        R.avg_us = sum / double(durations_us.size());
+
         std::sort(durations_us.begin(), durations_us.end());
-        median_us = durations_us[durations_us.size() / 2];
+        R.median_us = durations_us[durations_us.size() / 2]; // N is odd in your setup
+
         double sq = 0.0;
-        for (double v : durations_us) sq += (v - avg_us) * (v - avg_us);
-        stddev_us = std::sqrt(sq / durations_us.size());
-    }
-    if (!iters_used.empty()) {
-        double sumi = std::accumulate(iters_used.begin(), iters_used.end(), 0.0);
-        avg_iters = sumi / double(iters_used.size());
+        for (double v : durations_us) sq += (v - R.avg_us) * (v - R.avg_us);
+        R.stddev_us = std::sqrt(sq / double(durations_us.size()));
     }
 
-    double min_ratio = 0.0;
+    if (!iters_used.empty()) {
+        const double sumi = std::accumulate(iters_used.begin(), iters_used.end(), 0.0);
+        R.avg_iters = sumi / double(iters_used.size());
+    }
+
     if (!j_ratios.empty()) {
-        min_ratio = *std::min_element(j_ratios.begin(), j_ratios.end());
+        R.min_sigma_ratio = *std::min_element(j_ratios.begin(), j_ratios.end());
+    } else {
+        R.min_sigma_ratio = 0.0;
     }
 
     std::cout << "CASE " << s1.name << "-" << s2.name
-              << " | avg_us=" << avg_us
-              << " | median_us=" << median_us
-              << " | stddev_us=" << stddev_us
-              << " | avg_iters=" << avg_iters
-              << " | min_sigma_ratio=" << min_ratio
-              << " | success=" << success << "% (" << durations_us.size() << " succ, " << failed << " failed)\n";
+          << (bo.use_warm_start ? " [warm]" : " [cold]")
+          << " | avg_us=" << R.avg_us
+          << " | median_us=" << R.median_us
+          << " | stddev_us=" << R.stddev_us
+          << " | avg_iters=" << R.avg_iters;
+
+    if (bo.compute_svd) {
+        std::cout << " | min_sigma_ratio=" << R.min_sigma_ratio;
+    }
+
+    std::cout << " | success=" << R.success_pct
+            << "% (" << R.succ << " succ, " << R.failed << " failed)\n";
+
+
+    return R;
 }
 
-
-
 int main() {
-    
-    using namespace idcol;
+    // For stable timing runs
+    Eigen::setNbThreads(1);
 
     // ----------------- Polytope--------------
     Eigen::MatrixXd A1(8,3);
     A1 <<  1,  1,  1,
-        1, -1, -1,
-        -1,  1, -1,
-        -1, -1,  1,
-        -1, -1, -1,
-        -1,  1,  1,
-        1, -1,  1,
-        1,  1, -1;
+           1, -1, -1,
+          -1,  1, -1,
+          -1, -1,  1,
+          -1, -1, -1,
+          -1,  1,  1,
+           1, -1,  1,
+           1,  1, -1;
     A1 *= (1.0 / std::sqrt(3.0));
 
     Eigen::VectorXd b1(8);
     b1 << 1.0, 1.0, 1.0, 1.0,
-        5.0/3.0, 5.0/3.0, 5.0/3.0, 5.0/3.0;
+          5.0/3.0, 5.0/3.0, 5.0/3.0, 5.0/3.0;
 
     // ----------------- Smooth Truncated Cone--------------
     const double rb = 1.0;
@@ -350,11 +379,11 @@ int main() {
 
     // ----------------- Superelliptic Cylinder--------------
     const double r = 1.0;
-    const double h = 2.0; //half-height
+    const double h = 2.0; // half-height
 
     const double beta = 20.0;
     int n = 8;
-    
+
     RadialBoundsOptions optr;
     optr.num_starts = 1000;
 
@@ -362,24 +391,58 @@ int main() {
     auto tc   = make_tc(beta, rb, rt, ac, bc, optr);
     auto se   = make_se(n, a, b, c, optr);
     auto sec  = make_sec(n, r, h, optr);
-    
 
     std::vector<ShapeSpec> shapes = {poly, tc, se, sec};
 
-    bool warm_start = false;
+    // -------------------------
+    // Pass A: TIMING ONLY
+    // -------------------------
+    {
+        BenchOptions bo;
+        bo.use_warm_start = false; // you can loop both below
+        bo.write_csv = false;
+        bo.compute_svd = false;    // IMPORTANT: no SVD in timing pass
+        bo.t_max = 100.0;
+        bo.dt    = 1e-4;
 
-    
-    //run_case(sec,sec,warm_start);
+        for (bool warm : {false, true}) {
+            bo.use_warm_start = warm;
+            std::cout << "\n=== PASS A (timing) warm_start=" << warm << " ===\n";
+            for (const auto& s1 : shapes)
+                for (const auto& s2 : shapes)
+                    run_case(s1, s2, bo);
+        }
 
-    for (const auto& s1 : shapes)
-        for (const auto& s2 : shapes)
-            run_case(s1, s2, warm_start);
-    
+        // DCOL comparison cases (ellipsoid is n=1 in your convention)
+        n = 1;
+        auto ellip = make_se(n, a, b, c, optr);
 
-    n = 1;
-    auto ellip = make_se(n, a, b, c, optr);
-    run_case(poly, poly, warm_start);
-    run_case(poly, ellip, warm_start);
-    run_case(ellip, ellip, warm_start);
+        for (bool warm : {false, true}) {
+            bo.use_warm_start = warm;
+            std::cout << "\n=== PASS A (timing, DCOL subset) warm_start=" << warm << " ===\n";
+            run_case(poly,  poly,  bo);
+            run_case(poly,  ellip, bo);
+            run_case(ellip, ellip, bo);
+        }
+    }
 
+    // -------------------------
+    // Pass B: DIAGNOSTICS (SVD, optional CSV), subsampled
+    // -------------------------
+    {
+        BenchOptions bo;
+        bo.use_warm_start = false;
+        bo.write_csv = false;      // set true only if you really want per-sample outputs
+        bo.compute_svd = true;
+        bo.svd_stride  = 1000;     // SVD every 1000 successful solves (change as you like)
+        bo.t_max = 100.0;
+        bo.dt    = 1e-4;
+
+        std::cout << "\n=== PASS B (diagnostics) ===\n";
+        run_case(se, se, bo);      // examples
+        run_case(se, sec, bo);
+        run_case(sec, sec, bo);
+    }
+
+    return 0;
 }

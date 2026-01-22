@@ -35,20 +35,18 @@ target_include_directories(idcol_ergodic PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/external/eigen
 )
 
-# ---------- Optimization (Release only) ----------
+# ---------- Optimization + Eigen knobs (Release only) ----------
 if (MSVC)
     target_compile_options(idcol_example PRIVATE $<$<CONFIG:Release>:/O2 /DNDEBUG>)
     target_compile_options(idcol_ergodic PRIVATE $<$<CONFIG:Release>:/O2 /DNDEBUG>)
 
-    # Enable Eigen release-only optimizations (no debug checks) on MSVC
-    target_compile_definitions(idcol_example PRIVATE $<$<CONFIG:Release>:EIGEN_NO_DEBUG EIGEN_MPL2_ONLY>)
-    target_compile_definitions(idcol_ergodic PRIVATE $<$<CONFIG:Release>:EIGEN_NO_DEBUG EIGEN_MPL2_ONLY>)
+    target_compile_definitions(idcol_example PRIVATE $<$<CONFIG:Release>:EIGEN_NO_DEBUG EIGEN_MPL2_ONLY EIGEN_DONT_PARALLELIZE>)
+    target_compile_definitions(idcol_ergodic PRIVATE $<$<CONFIG:Release>:EIGEN_NO_DEBUG EIGEN_MPL2_ONLY EIGEN_DONT_PARALLELIZE>)
 else()
-    target_compile_options(idcol_example PRIVATE $<$<CONFIG:Release>:-O3 -DNDEBUG>)
-    target_compile_options(idcol_ergodic PRIVATE $<$<CONFIG:Release>:-O3 -DNDEBUG>)
+    target_compile_options(idcol_example PRIVATE $<$<CONFIG:Release>:-O3 -DNDEBUG -march=native>)
+    target_compile_options(idcol_ergodic PRIVATE $<$<CONFIG:Release>:-O3 -DNDEBUG -march=native>)
 
-    # Enable Eigen release-only optimizations on non-MSVC toolchains
-    target_compile_definitions(idcol_example PRIVATE $<$<CONFIG:Release>:EIGEN_NO_DEBUG EIGEN_MPL2_ONLY>)
-    target_compile_definitions(idcol_ergodic PRIVATE $<$<CONFIG:Release>:EIGEN_NO_DEBUG EIGEN_MPL2_ONLY>)
+    target_compile_definitions(idcol_example PRIVATE $<$<CONFIG:Release>:EIGEN_NO_DEBUG EIGEN_MPL2_ONLY EIGEN_DONT_PARALLELIZE>)
+    target_compile_definitions(idcol_ergodic PRIVATE $<$<CONFIG:Release>:EIGEN_NO_DEBUG EIGEN_MPL2_ONLY EIGEN_DONT_PARALLELIZE>)
 endif()
 
