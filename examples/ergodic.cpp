@@ -368,6 +368,9 @@ int main() {
 
     bool warm_start = false;
 
+    
+    //run_case(sec,sec,warm_start);
+
     for (const auto& s1 : shapes)
         for (const auto& s2 : shapes)
             run_case(s1, s2, warm_start);

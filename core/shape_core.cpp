@@ -11,33 +11,43 @@ using Eigen::VectorXd;
 using Eigen::Matrix3d;
 using Eigen::Matrix4d;
 
-
-
-inline double pow_even_int(double u, int n) {
-    // u^(2n)
-    double u2  = u * u;
-    double res = 1.0;
-    for (int k = 0; k < n; ++k) res *= u2;
-    return res;
+inline double pow_int_pos(double z, int n) {
+    // z > 0, n >= 0
+    double out = 1.0;
+    for (int k = 0; k < n; ++k) out *= z;
+    return out;
 }
 
-inline double pow_2n_minus_1(double u, int n) {
-    // u^(2n-1)
-    if (n == 1) return u;
-    double u2  = u * u;
-    double res = 1.0;
-    for (int k = 0; k < n - 1; ++k) res *= u2;
-    return u * res;
+inline void phi_grad_from_S(
+    double S,
+    double inv_e,
+    double& phi,
+    double& q,       // output q = S_safe^(1/e)
+    double& qprime   // output qprime = (1/e) * S_safe^(1/e - 1)
+) {
+    const double S_eps  = 1e-16;
+    const double S_safe = S + S_eps;
+
+    q = std::pow(S_safe, inv_e);
+    phi = q - 1.0;
+
+    // q'(S) = inv_e * q / S_safe
+    qprime = inv_e * q / S_safe;
 }
 
-inline double pow_2n_minus_2(double u, int n) {
-    // u^(2n-2)
-    if (n == 1) return 1.0;
-    double u2  = u * u;
-    double res = 1.0;
-    for (int k = 0; k < n - 1; ++k) res *= u2;
-    return res;
+
+inline double eps_u_from_n(int n) {
+    // Geometry budget: max boundary shrink ~ eps/2 in normalized coords.
+    // For max 0.1% change at n = 8 => eps_max = 0.002
+    const double eps_max = 2e-3;
+
+    if (n <= 1) return 0.0;
+    // ramp n=1 -> 0, n=8 -> eps_max, clamp for n>=8
+    const double t = std::min(1.0, std::max(0.0, (double(n) - 1.0) / 7.0));
+    // quadratic ramp: much smaller eps for n<8
+    return eps_max * t * t;
 }
+
 
 
 void shape_eval_local_phi_grad(
@@ -208,63 +218,48 @@ void shape_eval_local_phi_grad(
     // shape_id = 4 : Superellipsoid
     // ---------------------------------
     else if (shape_id == 4) {
-        if (nParams < 4) {
-            fail("Superellipsoid needs params = [n; a; b; c].");
-        }
+        if (nParams < 4) fail("Superellipsoid needs params = [n; a; b; c].");
 
-        double n_raw = p[0];
-        double a     = p[1];
-        double b     = p[2];
-        double c     = p[3];
+        const double n_raw = p[0];
+        const double a = p[1], b = p[2], c = p[3];
 
-        int n = static_cast<int>(std::round(n_raw));
-        if (n <= 0 || std::fabs(n_raw - n) > 1e-9) {
-            fail("Superellipsoid: n must be a positive integer.");
-        }
+        const int n = static_cast<int>(std::round(n_raw));
+        if (n <= 0 || std::fabs(n_raw - n) > 1e-9) fail("Superellipsoid: n must be a positive integer.");
 
-        double x1 = y(0);
-        double x2 = y(1);
-        double x3 = y(2);
+        const double inv_a = 1.0 / a, inv_b = 1.0 / b, inv_c = 1.0 / c;
 
-        const int e = 2 * n;  // exponent m = 2n
+        const double u1 = y(0) * inv_a;
+        const double u2 = y(1) * inv_b;
+        const double u3 = y(2) * inv_c;
 
-        // precompute inverses
-        const double inv_a = 1.0 / a;
-        const double inv_b = 1.0 / b;
-        const double inv_c = 1.0 / c;
+        const double eps_u = eps_u_from_n(n);
 
-        // normalized coords
-        const double u1 = x1 * inv_a;
-        const double u2 = x2 * inv_b;
-        const double u3 = x3 * inv_c;
+        const double z1 = u1*u1 + eps_u;
+        const double z2 = u2*u2 + eps_u;
+        const double z3 = u3*u3 + eps_u;
 
-        // S = sum u^e
-        const double t1 = pow_even_int(u1, n);  // u1^(2n)
-        const double t2 = pow_even_int(u2, n);
-        const double t3 = pow_even_int(u3, n);
+        const double z1_n = pow_int_pos(z1, n);
+        const double z2_n = pow_int_pos(z2, n);
+        const double z3_n = pow_int_pos(z3, n);
 
-        double S = t1 + t2 + t3;
+        const double S = z1_n + z2_n + z3_n;
 
-        // ---- NEW: phi = S^(1/e) - 1 (L_{2n} norm - 1) ----
-        // Protect fractional powers near S=0 (only relevant deep inside)
-        const double S_eps = 1e-16;
-        const double S_safe = (S > S_eps) ? S : S_eps;
+        const double inv_e = 1.0 / double(2*n);
 
-        const double inv_e = 1.0 / double(e);
-        const double q = std::pow(S_safe, inv_e);   // q = S^(1/e)
+        double q, qprime;
+        phi_grad_from_S(S, inv_e, phi, q, qprime);
 
-        phi = q - 1.0;
+        // z^(n-1) = z^n / z (safe since z>0)
+        const double z1_n1 = z1_n / z1;
+        const double z2_n1 = z2_n / z2;
+        const double z3_n1 = z3_n / z3;
 
-        // ---- Derivatives ----
-        // q'(S)  = (1/e) S^(1/e - 1)
-        const double qprime  = inv_e * std::pow(S_safe, inv_e - 1.0);
+        const double two_n = 2.0 * double(n);
 
-        // dS/dx_i = e * u_i^(e-1) * (1/s_i) = e * u_i^(2n-1) * inv_s
-        const double dSdx1 = double(e) * pow_2n_minus_1(u1,n) * inv_a;
-        const double dSdx2 = double(e) * pow_2n_minus_1(u2,n) * inv_b;
-        const double dSdx3 = double(e) * pow_2n_minus_1(u3,n) * inv_c;
+        const double dSdx1 = two_n * u1 * z1_n1 * inv_a;
+        const double dSdx2 = two_n * u2 * z2_n1 * inv_b;
+        const double dSdx3 = two_n * u3 * z3_n1 * inv_c;
 
-        // grad phi = q'(S) * grad S
         grad_phi(0) = qprime * dSdx1;
         grad_phi(1) = qprime * dSdx2;
         grad_phi(2) = qprime * dSdx3;
@@ -272,89 +267,60 @@ void shape_eval_local_phi_grad(
         return;
     }
 
+
     // ---------------------------------
     // shape_id = 5 : Superelliptic cylinder
     // ---------------------------------
     else if (shape_id == 5) {
-        if (nParams < 3) {
-            fail("Superelliptic cylinder needs params = [n; R; h].");
-        }
+        if (nParams < 3) fail("Superelliptic cylinder needs params = [n; R; h].");
 
-        double n_raw = p[0];
-        double R     = p[1];
-        double h     = p[2];
+        const double n_raw = p[0];
+        const double R = p[1], h = p[2];
+        if (R <= 0.0 || h <= 0.0) fail("Superelliptic cylinder: R, h must be > 0.");
 
-        if (R <= 0.0 || h <= 0.0) {
-            fail("Superelliptic cylinder: R, h must be > 0.");
-        }
+        const int n = static_cast<int>(std::round(n_raw));
+        if (n <= 0 || std::fabs(n_raw - n) > 1e-9) fail("Superelliptic cylinder: n must be a positive integer.");
 
-        int n = static_cast<int>(std::round(n_raw));
-        if (n <= 0 || std::fabs(n_raw - n) > 1e-9) {
-            fail("Superelliptic cylinder: n must be a positive integer.");
-        }
-
-        const int e = 2 * n;                 // exponent m = 2n
-        const double inv_e = 1.0 / double(e);
-
-        double x1 = y(0);
-        double x2 = y(1);
-        double x3 = y(2);
-
-        const double r2 = x2 * x2 + x3 * x3;
-
-        // inverses
         const double inv_R  = 1.0 / R;
         const double inv_R2 = inv_R * inv_R;
         const double inv_h  = 1.0 / h;
 
-        // ---- Build S = axial + radial ----
-        // axial: (x1/h)^(2n)
-        const double ua = x1 * inv_h;
-        const double Sa = pow_even_int(ua,n);
+        const double ua = y(0) * inv_h;
 
-        // radial: (r/R)^(2n) = (r2/R^2)^n
-        double Sr = 0.0;
-        if (r2 > eps) {
-            const double q = r2 * inv_R2;      // (r/R)^2
-            double qn = 1.0;
-            for (int k = 0; k < n; ++k) qn *= q; // q^n = (r/R)^(2n)
-            Sr = qn;
-        } else {
-            Sr = 0.0;
-        }
+        const double x2 = y(1);
+        const double x3 = y(2);
+        const double r2 = x2*x2 + x3*x3;
+        const double qrad = r2 * inv_R2;
 
-        double S = Sa + Sr;
+        const double eps_u = eps_u_from_n(n);
 
-        // phi = S^(1/e) - 1 
-        const double S_eps = 1e-16;
-        const double S_safe = (S > S_eps) ? S : S_eps;
+        const double za = ua*ua + eps_u;
+        const double zr = qrad + eps_u;
 
-        const double qS = std::pow(S_safe, inv_e); // S^(1/e)
-        phi = qS - 1.0;
+        const double Sa = pow_int_pos(za, n);
+        const double Sr = pow_int_pos(zr, n);
 
-        const double qprime  = inv_e * std::pow(S_safe, inv_e - 1.0);
-        const double qsecond = inv_e * (inv_e - 1.0) * std::pow(S_safe, inv_e - 2.0);
+        const double S = Sa + Sr;
 
-        // ---- Derivatives of S ----
-        // Axial:
-        // dSa/dx1  = e * (x1/h)^(e-1) * (1/h)
-        double dSdx1  = double(e) * pow_2n_minus_1(ua,n) * inv_h;
+        const double inv_e = 1.0 / double(2*n);
 
-        // Radial:
-        // Sr = (r/R)^e
-        // dSr/dx2 = e * Sr * x2 / r2
-        // dSr/dx3 = e * Sr * x3 / r2
-        double dSdx2 = 0.0, dSdx3 = 0.0;
+        double qS, qprime;
+        phi_grad_from_S(S, inv_e, phi, qS, qprime);
 
-        if (r2 > eps && Sr > 0.0) {
-            const double r4 = r2 * r2;
-            const double coeff = double(e) * Sr / r2;
+        const double two_n = 2.0 * double(n);
 
-            dSdx2 = coeff * x2;
-            dSdx3 = coeff * x3;
-        }
+        // axial: dSa/dx1
+        const double za_n1 = Sa / za;                // za^(n-1)
+        const double dSdx1 = two_n * ua * za_n1 * inv_h;
 
-        // ---- Gradient of phi ----
+        // radial: Sr = (qrad+eps)^n, dqrad/dx2 = 2x2/R^2, dqrad/dx3 = 2x3/R^2
+        const double zr_n1 = Sr / zr;                // zr^(n-1)
+        const double dqdx2 = 2.0 * x2 * inv_R2;
+        const double dqdx3 = 2.0 * x3 * inv_R2;
+
+        const double dSdx2 = double(n) * zr_n1 * dqdx2;
+        const double dSdx3 = double(n) * zr_n1 * dqdx3;
+
         grad_phi(0) = qprime * dSdx1;
         grad_phi(1) = qprime * dSdx2;
         grad_phi(2) = qprime * dSdx3;
@@ -634,84 +600,89 @@ void shape_eval_local(
     // shape_id = 4 : Superellipsoid
     // ---------------------------------
     else if (shape_id == 4) {
-        if (nParams < 4) {
-            fail("Superellipsoid needs params = [n; a; b; c].");
-        }
+        if (nParams < 4) fail("Superellipsoid needs params = [n; a; b; c].");
 
-        double n_raw = p[0];
-        double a     = p[1];
-        double b     = p[2];
-        double c     = p[3];
+        const double n_raw = p[0];
+        const double a = p[1], b = p[2], c = p[3];
 
-        int n = static_cast<int>(std::round(n_raw));
+        const int n = static_cast<int>(std::round(n_raw));
         if (n <= 0 || std::fabs(n_raw - n) > 1e-9) {
             fail("Superellipsoid: n must be a positive integer.");
         }
 
-        double x1 = y(0);
-        double x2 = y(1);
-        double x3 = y(2);
-
-        const int e = 2 * n;  // exponent m = 2n
-
-        // precompute inverses
         const double inv_a = 1.0 / a;
         const double inv_b = 1.0 / b;
         const double inv_c = 1.0 / c;
 
-        // normalized coords
-        const double u1 = x1 * inv_a;
-        const double u2 = x2 * inv_b;
-        const double u3 = x3 * inv_c;
+        const double u1 = y(0) * inv_a;
+        const double u2 = y(1) * inv_b;
+        const double u3 = y(2) * inv_c;
 
-        // S = sum u^e
-        const double t1 = pow_even_int(u1,n);  // u1^(2n)
-        const double t2 = pow_even_int(u2,n);
-        const double t3 = pow_even_int(u3,n);
+        const double eps_u = eps_u_from_n(n);
 
-        double S = t1 + t2 + t3;
+        // z_i = u_i^2 + eps_u  (strictly positive)
+        const double z1 = u1*u1 + eps_u;
+        const double z2 = u2*u2 + eps_u;
+        const double z3 = u3*u3 + eps_u;
 
-        // ---- NEW: phi = S^(1/e) - 1 (L_{2n} norm - 1) ----
-        // Protect fractional powers near S=0 (only relevant deep inside)
-        const double S_eps = 1e-16;
-        const double S_safe = (S > S_eps) ? S : S_eps;
+        // t_i = z_i^n
+        const double t1 = pow_int_pos(z1, n);
+        const double t2 = pow_int_pos(z2, n);
+        const double t3 = pow_int_pos(z3, n);
 
-        const double inv_e = 1.0 / double(e);
-        const double q = std::pow(S_safe, inv_e);   // q = S^(1/e)
+        const double S = t1 + t2 + t3;
 
+        // phi = S^(1/e) - 1
+        const double e = 2.0 * double(n);
+        const double inv_e = 1.0 / e;
+
+        const double S_eps  = 1e-16;
+        const double S_safe = S + S_eps;
+
+        const double q = std::pow(S_safe, inv_e);
         phi = q - 1.0;
 
-        // ---- Derivatives ----
-        // q'(S)  = (1/e) S^(1/e - 1)
-        // q''(S) = (1/e)(1/e - 1) S^(1/e - 2)
-        const double qprime  = inv_e * std::pow(S_safe, inv_e - 1.0);
-        const double qsecond = inv_e * (inv_e - 1.0) * std::pow(S_safe, inv_e - 2.0);
+        // q'(S), q''(S) without extra pow
+        const double qprime  = inv_e * q / S_safe;
+        const double qsecond = (inv_e - 1.0) * qprime / S_safe;
 
-        // dS/dx_i = e * u_i^(e-1) * (1/s_i) = e * u_i^(2n-1) * inv_s
-        const double dSdx1 = double(e) * pow_2n_minus_1(u1,n) * inv_a;
-        const double dSdx2 = double(e) * pow_2n_minus_1(u2,n) * inv_b;
-        const double dSdx3 = double(e) * pow_2n_minus_1(u3,n) * inv_c;
+        // z^(n-1), z^(n-2) derived from z^n
+        const double z1_n1 = t1 / z1;
+        const double z2_n1 = t2 / z2;
+        const double z3_n1 = t3 / z3;
 
-        // grad phi = q'(S) * grad S
+        const double z1_n2 = z1_n1 / z1;   // = t1 / (z1*z1)
+        const double z2_n2 = z2_n1 / z2;
+        const double z3_n2 = z3_n1 / z3;
+
+        const double two_n = 2.0 * double(n);
+        const double two_n_minus_1 = 2.0 * double(n) - 1.0;
+
+        // dS/dx_i
+        const double dSdx1 = two_n * u1 * z1_n1 * inv_a;
+        const double dSdx2 = two_n * u2 * z2_n1 * inv_b;
+        const double dSdx3 = two_n * u3 * z3_n1 * inv_c;
+
         grad_phi(0) = qprime * dSdx1;
         grad_phi(1) = qprime * dSdx2;
         grad_phi(2) = qprime * dSdx3;
 
-        // d2S/dx_i^2 = e(e-1) u_i^(e-2) * (1/s_i^2) = e(e-1) u_i^(2n-2) * inv_s^2
-        const double d2Sdx1 = double(e) * double(e - 1) * pow_2n_minus_2(u1,n) * (inv_a * inv_a);
-        const double d2Sdx2 = double(e) * double(e - 1) * pow_2n_minus_2(u2,n) * (inv_b * inv_b);
-        const double d2Sdx3 = double(e) * double(e - 1) * pow_2n_minus_2(u3,n) * (inv_c * inv_c);
+        // diagonal Hessian of S: d2S/dx_i^2
+        // d2S/du^2 = 2n z^(n-2) [ eps + (2n-1) u^2 ]
+        // then multiply by (du/dx)^2
+        const double d2Sdx1 = two_n * z1_n2 * (eps_u + two_n_minus_1 * u1*u1) * (inv_a*inv_a);
+        const double d2Sdx2 = two_n * z2_n2 * (eps_u + two_n_minus_1 * u2*u2) * (inv_b*inv_b);
+        const double d2Sdx3 = two_n * z3_n2 * (eps_u + two_n_minus_1 * u3*u3) * (inv_c*inv_c);
 
-        // Hess phi = q'(S) * Hess S + q''(S) * (grad S)(grad S)^T
         hess_phi.setZero();
 
-        // q'(S) * Hess S (diagonal)
+        // q'(S)*Hess(S)
         hess_phi(0,0) += qprime * d2Sdx1;
         hess_phi(1,1) += qprime * d2Sdx2;
         hess_phi(2,2) += qprime * d2Sdx3;
 
-        // q''(S) * gradS * gradS^T (dense rank-1 update)
-        Eigen::Vector3d gS(dSdx1, dSdx2, dSdx3);
+        // q''(S)*gradS*gradS^T
+        const Eigen::Vector3d gS(dSdx1, dSdx2, dSdx3);
         hess_phi.noalias() += qsecond * (gS * gS.transpose());
 
         return;
@@ -721,110 +692,104 @@ void shape_eval_local(
     // shape_id = 5 : Superelliptic cylinder
     // ---------------------------------
    else if (shape_id == 5) {
-        if (nParams < 3) {
-            fail("Superelliptic cylinder needs params = [n; R; h].");
-        }
+        if (nParams < 3) fail("Superelliptic cylinder needs params = [n; R; h].");
 
-        double n_raw = p[0];
-        double R     = p[1];
-        double h     = p[2];
+        const double n_raw = p[0];
+        const double R = p[1], h = p[2];
+        if (R <= 0.0 || h <= 0.0) fail("Superelliptic cylinder: R, h must be > 0.");
 
-        if (R <= 0.0 || h <= 0.0) {
-            fail("Superelliptic cylinder: R, h must be > 0.");
-        }
+        const int n = static_cast<int>(std::round(n_raw));
+        if (n <= 0 || std::fabs(n_raw - n) > 1e-9) fail("Superelliptic cylinder: n must be a positive integer.");
 
-        int n = static_cast<int>(std::round(n_raw));
-        if (n <= 0 || std::fabs(n_raw - n) > 1e-9) {
-            fail("Superelliptic cylinder: n must be a positive integer.");
-        }
-
-        const int e = 2 * n;                 // exponent m = 2n
-        const double inv_e = 1.0 / double(e);
-
-        double x1 = y(0);
-        double x2 = y(1);
-        double x3 = y(2);
-
-        const double r2 = x2 * x2 + x3 * x3;
-
-        // inverses
         const double inv_R  = 1.0 / R;
         const double inv_R2 = inv_R * inv_R;
         const double inv_h  = 1.0 / h;
 
-        // ---- Build S = axial + radial ----
-        // axial: (x1/h)^(2n)
+        const double x1 = y(0);
+        const double x2 = y(1);
+        const double x3 = y(2);
+
         const double ua = x1 * inv_h;
-        const double Sa = pow_even_int(ua,n);
 
-        // radial: (r/R)^(2n) = (r2/R^2)^n
-        double Sr = 0.0;
-        if (r2 > eps) {
-            const double q = r2 * inv_R2;      // (r/R)^2
-            double qn = 1.0;
-            for (int k = 0; k < n; ++k) qn *= q; // q^n = (r/R)^(2n)
-            Sr = qn;
-        } else {
-            Sr = 0.0;
-        }
+        const double r2 = x2*x2 + x3*x3;
+        const double qrad = r2 * inv_R2;     // (r/R)^2
 
-        double S = Sa + Sr;
+        const double eps_u = eps_u_from_n(n);
 
-        // phi = S^(1/e) - 1 
-        const double S_eps = 1e-16;
-        const double S_safe = (S > S_eps) ? S : S_eps;
+        // za = ua^2 + eps, zr = qrad + eps   (both > 0)
+        const double za = ua*ua + eps_u;
+        const double zr = qrad + eps_u;
 
-        const double qS = std::pow(S_safe, inv_e); // S^(1/e)
+        // Sa = za^n, Sr = zr^n
+        const double Sa = pow_int_pos(za, n);
+        const double Sr = pow_int_pos(zr, n);
+
+        const double S = Sa + Sr;
+
+        const double e = 2.0 * double(n);
+        const double inv_e = 1.0 / e;
+
+        const double S_eps  = 1e-16;
+        const double S_safe = S + S_eps;
+
+        const double qS = std::pow(S_safe, inv_e);
         phi = qS - 1.0;
 
-        const double qprime  = inv_e * std::pow(S_safe, inv_e - 1.0);
-        const double qsecond = inv_e * (inv_e - 1.0) * std::pow(S_safe, inv_e - 2.0);
+        const double qprime  = inv_e * qS / S_safe;
+        const double qsecond = (inv_e - 1.0) * qprime / S_safe;
 
-        // ---- Derivatives of S ----
-        // Axial:
-        // dSa/dx1  = e * (x1/h)^(e-1) * (1/h)
-        // d2Sa/dx1 = e(e-1) (x1/h)^(e-2) * (1/h^2)
-        double dSdx1  = double(e) * pow_2n_minus_1(ua,n) * inv_h;
-        double d2Sdx1 = double(e) * double(e - 1) * pow_2n_minus_2(ua,n) * (inv_h * inv_h);
+        // derive (n-1),(n-2) powers by division
+        const double za_n1 = Sa / za;
+        const double za_n2 = za_n1 / za;
 
-        // Radial:
-        // Sr = (r/R)^e
-        // dSr/dx2 = e * Sr * x2 / r2
-        // dSr/dx3 = e * Sr * x3 / r2
-        // Hessian matches your existing closed form
-        double dSdx2 = 0.0, dSdx3 = 0.0;
-        double d2Sdx2 = 0.0, d2Sdx3 = 0.0, d2Sdx2dx3 = 0.0;
+        const double zr_n1 = Sr / zr;
+        const double zr_n2 = zr_n1 / zr;
 
-        if (r2 > eps && Sr > 0.0) {
-            const double r4 = r2 * r2;
-            const double coeff = double(e) * Sr / r2;
+        const double two_n = 2.0 * double(n);
+        const double two_n_minus_1 = 2.0 * double(n) - 1.0;
 
-            dSdx2 = coeff * x2;
-            dSdx3 = coeff * x3;
+        // ---- Gradient of S ----
+        // axial: dSa/dx1 = 2n * ua * za^(n-1) * (1/h)
+        const double dSdx1 = two_n * ua * za_n1 * inv_h;
 
-            d2Sdx2    = double(e) * Sr / r4 * ((double(e) - 1.0) * x2 * x2 + x3 * x3);
-            d2Sdx3    = double(e) * Sr / r4 * ((double(e) - 1.0) * x3 * x3 + x2 * x2);
-            d2Sdx2dx3 = double(e) * (double(e) - 2.0) * Sr * x2 * x3 / r4;
-        }
+        // radial: Sr = (qrad+eps)^n, dqrad/dx2 = 2x2/R^2, dqrad/dx3 = 2x3/R^2
+        const double dqdx2 = 2.0 * x2 * inv_R2;
+        const double dqdx3 = 2.0 * x3 * inv_R2;
 
-        // ---- Gradient of phi ----
+        const double dSdx2 = double(n) * zr_n1 * dqdx2;
+        const double dSdx3 = double(n) * zr_n1 * dqdx3;
+
         grad_phi(0) = qprime * dSdx1;
         grad_phi(1) = qprime * dSdx2;
         grad_phi(2) = qprime * dSdx3;
 
+        // ---- Hessian of S ----
+        // axial second derivative:
+        // d2Sa/dx1^2 = 2n * za^(n-2) [ eps + (2n-1) ua^2 ] * (1/h^2)
+        const double d2Sdx1 = two_n * za_n2 * (eps_u + two_n_minus_1 * ua*ua) * (inv_h * inv_h);
+
+        // radial second derivatives:
+        // Sr = (qrad+eps)^n
+        // d2Sr/dxi^2 = n(n-1) zr^(n-2) (dq/dxi)^2 + n zr^(n-1) d2q/dxi^2
+        // d2q/dx2^2 = d2q/dx3^2 = 2/R^2, d2q/dx2dx3 = 0
+        const double d2q = 2.0 * inv_R2;
+
+        const double nn1 = double(n) - 1.0;
+
+        const double d2Sdx2 = double(n) * ( nn1 * zr_n2 * dqdx2 * dqdx2 + zr_n1 * d2q );
+        const double d2Sdx3 = double(n) * ( nn1 * zr_n2 * dqdx3 * dqdx3 + zr_n1 * d2q );
+        const double d2Sdx2dx3 = double(n) * nn1 * zr_n2 * dqdx2 * dqdx3;
+
         // ---- Hessian of phi ----
-        // H = q'(S) * Hess(S) + q''(S) * gradS * gradS^T
         hess_phi.setZero();
 
-        // q'(S) * Hess(S) (axial + radial)
         hess_phi(0,0) += qprime * d2Sdx1;
         hess_phi(1,1) += qprime * d2Sdx2;
         hess_phi(2,2) += qprime * d2Sdx3;
         hess_phi(1,2) += qprime * d2Sdx2dx3;
         hess_phi(2,1) += qprime * d2Sdx2dx3;
 
-        // rank-1 update from q''(S) * gradS*gradS^T
-        Eigen::Vector3d gS(dSdx1, dSdx2, dSdx3);
+        const Eigen::Vector3d gS(dSdx1, dSdx2, dSdx3);
         hess_phi.noalias() += qsecond * (gS * gS.transpose());
 
         return;
