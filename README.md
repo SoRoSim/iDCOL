@@ -4,7 +4,7 @@
 
 # iDCOL
 
-iDCOL is a differentiable collision framework for convex contact geometry, designed for gradient-based simulation, planning, and optimization in contact-rich robotic systems.
+iDCOL is a differentiable contact kinematic framework for strictly convex contact geometry, designed for gradient-based simulation, planning, and optimization in contact-rich robotic systems.
 
 It provides:
 
@@ -16,7 +16,6 @@ It provides:
 At its core, iDCOL reduces contact computation to a fixed-size nonlinear solve, making it fast, differentiable, and easy to integrate.
 
 ---
-
 ## Quickstart (C++)
 
 The intended usage is deliberately simple:
@@ -77,36 +76,56 @@ int main() {
 
 That is the entire workflow.
 
-* Warm starting is handled internally by ContactPair
-* To force a cold start, call pair.reset_guess()
-* Analytical Jacobians are available in out.newton.J
-
 ---
-
 ## Supported shapes
 
-Shapes are constructed using helper functions:
+Shapes are constructed using helper functions in the `idcol` namespace.
+The current implementation supports a sphere and four families of smooth convex implicit shapes.  
+Additional shape families will be added in future releases.
 
-* make_poly(beta, A, b)
-  Smoothed convex polytope Ax <= b
+### Shape constructors
 
-* make_tc(beta, rb, rt, a, b)
-  Smooth truncated cone
+```cpp
+idcol::make_sphere(R)
+```
+Sphere of radius `R`.
 
-* make_se(n, a, b, c)
-  Superellipsoid (use n = 1 for ellipsoid)
+```cpp
+idcol::make_poly(beta, A, b)
+```
+Smoothed convex polytope defined by the half-space constraints
+A x ≤ b
 
-* make_sec(n, r, h)
-  Superelliptic cylinder
+- `A` is an \(m x 3\) matrix of outward normals  
+- `b` is an \(m x 1\) vector of offsets  
+- `beta` controls the smooth-max approximation (larger = sharper)
 
-Each constructor returns a ShapeSpec containing:
+```cpp
+idcol::make_tc(beta, rb, rt, a, b)
+```
+Smooth truncated cone.
 
-* shape identifier,
-* packed parameters,
-* precomputed radial bounds.
+- `rb` : base radius  
+- `rt` : top radius  
+- `a, b` : axial profile parameters  
+- `beta` : smoothing parameter
 
+```cpp
+idcol::make_se(n, a, b, c)
+```
+Superellipsoid with semi-axes `(a, b, c)` and exponent `n`.
+
+Setting `n = 1` yields a standard ellipsoid.
+
+```cpp
+idcol::make_sec(n, r, h)
+```
+Superelliptic cylinder.
+
+- `r` : radius  
+- `h` : half-height  
+- `n` : shape exponent
 ---
-
 ## Getting the source
 
 This repository uses Git submodules.
@@ -195,5 +214,6 @@ The output structure contains the contact solution, residuals, and analytical Ja
 iDCOL is built around three principles:
 
 * Strictly convext implicit premitives
-* Fixed-size solvers for predictable performance
+* Scaling based convex optimization
+* Fixed-size Newton solver
 * Analytical derivatives first
