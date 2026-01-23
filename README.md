@@ -217,3 +217,13 @@ iDCOL is built around three principles:
 * Scaling based convex optimization
 * Fixed-size Newton solver
 * Analytical derivatives first
+
+---
+
+## Status
+
+This is an active research codebase accompanying ongoing work on
+implicit differentiable collision detection. The implementation is
+usable but evolving; APIs and interfaces may change without notice.
+
+The code is provided as-is for research and experimentation.
