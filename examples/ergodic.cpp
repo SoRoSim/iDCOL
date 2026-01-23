@@ -14,18 +14,16 @@
 #include <string>
 #include <optional>
 
-#include "core/idcol_newton.hpp"
-#include "core/radial_bounds.hpp"
-#include "core/shape_core.hpp"
-#include "core/idcol_solve.hpp"
+#include "core/idcol_implicitfamily.hpp"
+#include "core/idcol_contactpair.hpp"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
-// ------------------------------
-// Pose generator (unchanged)
-// ------------------------------
+// ---------------
+// Ergodic pose generator 
+// ---------------
 Eigen::Matrix4d getSystematicPose(double t, double r_min, double r_max) {
     const double f1 = std::sqrt(2.0);
     const double f2 = std::sqrt(3.0);
@@ -67,84 +65,6 @@ Eigen::Matrix4d getSystematicPose(double t, double r_min, double r_max) {
     return g2;
 }
 
-// ------------------------------
-// Packing helpers (unchanged)
-// ------------------------------
-static Eigen::VectorXd pack_polytope_params(
-    const Eigen::Matrix<double, Eigen::Dynamic, 3, Eigen::RowMajor>& A,
-    const Eigen::VectorXd& b,
-    double beta)
-{
-    const int m = static_cast<int>(A.rows());
-    if (A.cols() != 3) throw std::runtime_error("A must be m x 3");
-    if (b.size() != m) throw std::runtime_error("b must be length m");
-
-    Eigen::VectorXd params(3 + 3*m + m);
-
-    params(0) = beta;
-    params(1) = static_cast<double>(m);
-    params(2) = 1.0; // Lscale
-
-    // A packed col-major
-    double* outA = params.data() + 3;
-    for (int j = 0; j < 3; ++j)
-        for (int i = 0; i < m; ++i)
-            outA[j*m + i] = A(i,j);
-
-    params.segment(3 + 3*m, m) = b;
-    return params;
-}
-
-struct ShapeSpec {
-    int shape_id;
-    Eigen::VectorXd params;
-    RadialBounds bounds;
-    std::string name;
-};
-
-static ShapeSpec make_poly(const Eigen::Matrix<double,Eigen::Dynamic,3,Eigen::RowMajor>& A,
-                           const Eigen::VectorXd& b, double beta, const RadialBoundsOptions& optr)
-{
-    ShapeSpec s;
-    s.shape_id = 2;
-    s.name = "poly";
-    s.params = pack_polytope_params(A, b, beta);
-    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
-    return s;
-}
-
-static ShapeSpec make_tc(double beta, double rb, double rt, double ac, double bc, const RadialBoundsOptions& optr)
-{
-    ShapeSpec s;
-    s.shape_id = 3;
-    s.name = "tc";
-    Eigen::Matrix<double,5,1> p; p << beta, rb, rt, ac, bc;
-    s.params = p;
-    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
-    return s;
-}
-
-static ShapeSpec make_se(double n, double a, double b, double c, const RadialBoundsOptions& optr)
-{
-    ShapeSpec s;
-    s.shape_id = 4;
-    s.name = "se";
-    Eigen::Vector4d p; p << n, a, b, c;
-    s.params = p;
-    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
-    return s;
-}
-
-static ShapeSpec make_sec(double n, double r, double h, const RadialBoundsOptions& optr)
-{
-    ShapeSpec s;
-    s.shape_id = 5;
-    s.name = "sec";
-    Eigen::Vector3d p; p << n, r, h;
-    s.params = p;
-    s.bounds = compute_radial_bounds_local(s.shape_id, s.params, optr);
-    return s;
-}
 
 // ------------------------------
 // Benchmark options: Pass A / Pass B
@@ -179,24 +99,10 @@ struct BenchResult {
     std::size_t failed = 0;
 };
 
-static BenchResult run_case(const ShapeSpec& s1, const ShapeSpec& s2, const BenchOptions& bo)
+static BenchResult run_case(const idcol::ShapeSpec& s1, const idcol::ShapeSpec& s2, const BenchOptions& bo)
 {
     using namespace idcol;
     using Clock = std::chrono::steady_clock;
-
-    Guess guess0;
-    bool have_guess = false;
-
-    ProblemData P;
-    P.shape_id1 = s1.shape_id;
-    P.shape_id2 = s2.shape_id;
-    P.params1 = s1.params;
-    P.params2 = s2.params;
-
-    SolveData S;
-    S.P = P;
-    S.bounds1 = s1.bounds;
-    S.bounds2 = s2.bounds;
 
     NewtonOptions opt;
     opt.L = 1;
@@ -207,6 +113,9 @@ static BenchResult run_case(const ShapeSpec& s1, const ShapeSpec& s2, const Benc
     SurrogateOptions sopt;
     sopt.fS_values = {1, 3, 5, 7, 9};
     sopt.enable_scaling = false;
+
+    // Contact pair 
+    ContactPair pair(s1, s2, opt, sopt);
 
     const double r_min = 0.1 * std::min(s1.bounds.Rin,  s2.bounds.Rin);
     const double r_max = 2.0 * std::max(s1.bounds.Rout, s2.bounds.Rout);
@@ -235,15 +144,12 @@ static BenchResult run_case(const ShapeSpec& s1, const ShapeSpec& s2, const Benc
 
     for (int i = 0; i < N; ++i) {
         const double t = i * bo.dt;
+        const Eigen::Matrix4d g = getSystematicPose(t, r_min, r_max); // relative ergodic pose g(t)
 
-        // You said (1) is OK: this is the correct field used by the solver in your project.
-        S.P.g = getSystematicPose(t, r_min, r_max);
-
-        const std::optional<Guess> guess =
-            (bo.use_warm_start && have_guess) ? std::optional<Guess>(guess0) : std::nullopt;
+        if (!bo.use_warm_start) pair.reset_guess();
 
         const auto solve_t0 = Clock::now();
-        SolveResult out = idcol_solve(S, guess, opt, sopt);
+        SolveResult out = pair.solve(g);
         const auto solve_t1 = Clock::now();
 
         const double dur_us =
@@ -290,12 +196,6 @@ static BenchResult run_case(const ShapeSpec& s1, const ShapeSpec& s2, const Benc
             }
         }
 
-        // Warm start update (kept out of timing)
-        guess0.x       = out.newton.x;
-        guess0.alpha   = out.newton.alpha;
-        guess0.lambda1 = out.newton.lambda1;
-        guess0.lambda2 = out.newton.lambda2;
-        have_guess = true;
     }
 
     if (bo.write_csv && csv.is_open()) csv.close();
@@ -360,7 +260,6 @@ int main() {
           -1,  1,  1,
            1, -1,  1,
            1,  1, -1;
-    A1 *= (1.0 / std::sqrt(3.0));
 
     Eigen::VectorXd b1(8);
     b1 << 1.0, 1.0, 1.0, 1.0,
@@ -387,12 +286,12 @@ int main() {
     RadialBoundsOptions optr;
     optr.num_starts = 1000;
 
-    auto poly = make_poly(A1, b1, beta, optr);
-    auto tc   = make_tc(beta, rb, rt, ac, bc, optr);
-    auto se   = make_se(n, a, b, c, optr);
-    auto sec  = make_sec(n, r, h, optr);
+    auto poly = idcol::make_poly(beta, A1, b1, optr);        // note arg order
+    auto tc   = idcol::make_tc(beta, rb, rt, ac, bc, optr);
+    auto se   = idcol::make_se(n, a, b, c, optr);
+    auto sec  = idcol::make_sec(n, r, h, optr);
 
-    std::vector<ShapeSpec> shapes = {poly, tc, se, sec};
+    std::vector<idcol::ShapeSpec> shapes = {poly, tc, se, sec};
 
     // -------------------------
     // Pass A: TIMING ONLY
@@ -415,7 +314,7 @@ int main() {
 
         // DCOL comparison cases (ellipsoid is n=1 in your convention)
         n = 1;
-        auto ellip = make_se(n, a, b, c, optr);
+        auto ellip = idcol::make_se(n, a, b, c, optr);
 
         for (bool warm : {false, true}) {
             bo.use_warm_start = warm;
