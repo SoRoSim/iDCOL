@@ -297,6 +297,7 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     std::optional<idcol::Guess> guess = parse_guess_optional(Gmx);
     idcol::NewtonOptions opt          = parse_opt_optional(Omx);
     idcol::SurrogateOptions sopt      = parse_sopt_optional(Smx_opt);
+    
 
     idcol::SolveResult out = idcol::idcol_solve(S, guess, opt, sopt);
 

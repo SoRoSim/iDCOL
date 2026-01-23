@@ -37,17 +37,16 @@ inline void phi_grad_from_S(
 
 
 inline double eps_u_from_n(int n) {
+    const double eps_min = 1e-12;   // enough to prevent 0/0, tiny geometry perturbation
+    const double eps_max = 2e-3;
     // Geometry budget: max boundary shrink ~ eps/2 in normalized coords.
     // For max 0.1% change at n = 8 => eps_max = 0.002
-    const double eps_max = 2e-3;
 
-    if (n <= 1) return 0.0;
-    // ramp n=1 -> 0, n=8 -> eps_max, clamp for n>=8
+    if (n <= 1) return eps_min;
+
     const double t = std::min(1.0, std::max(0.0, (double(n) - 1.0) / 7.0));
-    // quadratic ramp: much smaller eps for n<8
-    return eps_max * t * t;
+    return std::max(eps_min, eps_max * t * t);
 }
-
 
 
 void shape_eval_local_phi_grad(
