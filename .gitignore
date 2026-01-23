@@ -6,6 +6,9 @@
 /build/
 /build-*/
 
+# MATLAB autosave files
+*.asv
+
 # compiled MEX binaries
 *.mexw64
 *.mexa64
