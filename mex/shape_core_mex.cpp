@@ -1,10 +1,10 @@
 // shape_core_mex.cpp
 //
 // MATLAB usage:
-//   out = shape_core_mex("local_phi_grad", y, shape_id, params)
-//   out = shape_core_mex("global_xa_phi_grad", g, x, alpha, shape_id, params)
-//   out = shape_core_mex("local", y, shape_id, params)
-//   out = shape_core_mex("global_xa", g, x, alpha, shape_id, params)
+//   out = shape_core_mex('local_phi_grad', y, shape_id, params)
+//   out = shape_core_mex('global_xa_phi_grad', g, x, alpha, shape_id, params)
+//   out = shape_core_mex('local', y, shape_id, params)
+//   out = shape_core_mex('global_xa', g, x, alpha, shape_id, params)
 //
 // Returns struct:
 //   out.phi

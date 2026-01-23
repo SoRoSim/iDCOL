@@ -1,8 +1,8 @@
 // idcol_kkt_mex.cpp
 //
 // MATLAB usage:
-//   out = idcol_kkt_mex("F",  x, s, lambda1, lambda2, P)
-//   out = idcol_kkt_mex("FJ", x, s, lambda1, lambda2, P)
+//   out = idcol_kkt_mex('F',  x, s, lambda1, lambda2, P)
+//   out = idcol_kkt_mex('FJ', x, s, lambda1, lambda2, P)
 //
 // where:
 //   x        : 3x1
