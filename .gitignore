@@ -5,6 +5,7 @@
 # build directories
 /build/
 /build-*/
+.vscode/
 
 # MATLAB autosave files
 *.asv
