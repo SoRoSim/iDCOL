@@ -53,7 +53,7 @@ int main()
     // 3) Relative pose between the two bodies
     // -------------------------------------------------
     Eigen::Matrix4d g = Eigen::Matrix4d::Identity();
-    g.topRightCorner<3,1>() << -1.8, -20.7, -0.3;
+    g.topRightCorner<3,1>() << -1.8, -2.7, -0.3;
 
     // -------------------------------------------------
     // 4) Solve contact
