@@ -213,7 +213,7 @@ The output structure contains the contact solution, residuals, and analytical Ja
 
 iDCOL is built around three principles:
 
-* Strictly convext implicit premitives
+* Strictly convex implicit primitives
 * Scaling based convex optimization
 * Fixed-size Newton solver
 * Analytical derivatives first
