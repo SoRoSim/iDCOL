@@ -231,10 +231,13 @@ usable but evolving; APIs and interfaces may change without notice.
 The code is provided as-is for research and experimentation. If you use this code in your research, please cite:
 
 ```bibtex
-@inproceedings{author2025awesomecontrol,
-  title     = {Title of the Paper},
-  author    = {Author, First and Author, Second},
-  booktitle = {Proceedings of ...},
-  year      = {2025}
+@misc{mathew2026collisiondetectionanalyticalderivatives,
+      title={Collision Detection with Analytical Derivatives of Contact Kinematics}, 
+      author={Anup Teejo Mathew and Anees Peringal and Daniele Caradonna and Frederic Boyer and Federico Renda},
+      year={2026},
+      eprint={2602.03250},
+      archivePrefix={arXiv},
+      primaryClass={cs.RO},
+      url={https://arxiv.org/abs/2602.03250}, 
 }
 
